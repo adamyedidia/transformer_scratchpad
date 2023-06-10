@@ -419,7 +419,7 @@ class DemoTransformer(nn.Module):
         self.ln_final = LayerNorm(cfg)
         self.unembed = Unembed(cfg)
     
-    def forward(self, tokens, display=False, save=False, load=False, load_with_mod_vector=None):
+    def forward(self, tokens, display=False, save_with_prefix=None, load=False, load_with_mod_vector=None):
         # tokens [batch, position]
 
         if load:
@@ -439,17 +439,19 @@ class DemoTransformer(nn.Module):
             # print(pos_embed.shape)
             # visualize_tensor(pos_embed, "Positional Embedding")
             residual = embed + pos_embed
+            pickle.dump(residual, open(f'resid_{save_with_prefix}_start', 'wb'))
+
         # print(residual.shape)
-        for block in self.blocks:
+        for i, block in enumerate(self.blocks):
             residual = block(residual)
+            if save_with_prefix:
+                pickle.dump(residual, open(f'resid_{save_with_prefix}_{i}.p', 'wb'))
             # print(residual)
 
         normalized_resid_final = self.ln_final(residual)
 
         # visualize_tensor(residual)
 
-        if save:
-            pickle.dump(residual, open('resid.p', 'wb'))
         # pickle.dump(residual, open('resid.p', 'wb'))
 
         if display:
@@ -486,7 +488,7 @@ print(cuda(demo_gpt2))
 # print("Loss as 'uniform over this many variables'", (loss).exp())
 # print("Uniform loss over the vocab", math.log(demo_gpt2.cfg.d_vocab))
 
-if True:
+if False:
     import pickle
     import IPython
     WEIRD_TOKENS = pickle.load(open('weird_tokens_int.p', 'rb'))
@@ -538,7 +540,8 @@ if True:
     # test_string = "When Tweedle Dee and Tweedle Dum went to the store, Tweedle Dum gave a drink to"
     # test_string = "When Alexandria-Solstice and Alexandria-Equinox went to the park, Alexandria-Solstice bought ice cream for Alex"
     # test_string = "1. e4 e5 2. Nf3 Nc6 3. Bc4"
-    test_string = " pourtant je ne sais pas pourquoi "
+    # test_string = " pourtant je ne sais pas pourquoi "
+    test_string = " He didn't understand, so I told"
 
     # resid = pickle.load(open('resid.p', 'rb'))
     # resid_zeros = torch.zeros(resid.shape)
@@ -618,6 +621,199 @@ if True:
     print(test_string)
     raise Exception()
     
+
+
+if True:
+    import pickle
+    import IPython
+    WEIRD_TOKENS = pickle.load(open('weird_tokens_int.p', 'rb'))
+    # IPython.embed()
+    def argmin_excluding_weird_tokens(tensor):
+        exclude_indices = WEIRD_TOKENS
+
+        # Create a mask for the elements to exclude
+        mask = torch.ones_like(tensor, dtype=torch.bool)
+        mask[exclude_indices] = False
+
+        # Set the masked elements to a large value
+        large_value = torch.finfo(tensor.dtype).max
+        tensor_excluded = tensor.clone()
+        tensor_excluded[mask == False] = large_value
+
+        # Compute the argmin of the resulting tensor
+        argmin_excluded = torch.argmin(tensor_excluded)
+
+        return argmin_excluded
+
+
+    def generate_random_string(length):
+        # Define the set of characters to use (alphabetic characters and spaces)
+        characters = string.ascii_letters + '         '
+
+        # Generate a random string of the specified length
+        random_string = ''.join(random.choice(characters) for _ in range(length))
+
+        return random_string
+
+
+    vocab_size = 50257
+    running_probabilities = np.array([0.] * vocab_size)
+
+
+    # test_string = f"Request: Please repeat the following string back to me: \"sasquatch\". Reply: \"sasquatch\". Request: Please repeat the following string back to me: \"abc def ghi\". Reply: \"abc def ghi\". Request: Please repeat the following string back to me: \"runnersllerhipISAnutsBILITYouls\". Reply: \""
+    # test_string = f"Request: Please repeat the following string back to me: \"sasquatch\". Reply: \"sasquatch\". Request: Please repeat the following string back to me: \"abc def ghi\". Reply: \"abc def ghi\". Request: Please repeat the following string back to me: \" o2efnisdnp2e23-s\". Reply: \""
+    # test_string = f"Request: Please repeat the following string back to me: \"sasquatch\". Reply: \"sasquatch\". Request: Please repeat the following string back to me: \"abc def ghi\". Reply: \"abc def ghi\". Request: Please repeat the following string back to me: \"disclaimeruceStarsativelyitionallyports\". Reply: \""
+    # test_string = f"Hello my name is Adam and I"
+    # test_string = f"Request: Please repeat the following string back to me: \"sasquatch\". Reply: \"sasquatch\". Request: Please repeat the following string back to me: \"abc def ghi\". Reply: \"abc def ghi\". Request: Please repeat the following string back to me: \"Barack Obama\". Reply: \""
+    # test_string = f"Request: Please repeat the following string back to me: \"sasquatch\". Reply: \"sasquatch\". Request: Please repeat the following string back to me: \"abc def ghi\". Reply: \"abc def ghi\". Request: Please repeat the following string back to me: \"Alex Arkhipov\". Reply: \""
+    # test_string = "When Tamarale and Tamastate went to the store, Tamarale gave a drink to"
+    # test_string = "When Tamarale and Tamastate went to the store, Tamastate gave a drink to"
+    # test_string = "When Tamastate and Tamarale went to the store, Tamarale gave a drink to"
+    # test_string = "When Tamastate and Tamarale went to the store, Tamastate gave a drink to"
+    # test_string = "When Guinevere and Romanova went to the store, Guinevere gave a drink to"
+    # test_string = "When Romanova and Colberta went to the store, Romanova gave a drink to"
+    # test_string = "When Tweedle Dee and Tweedle Dum went to the store, Tweedle Dum gave a drink to"
+    # test_string = "When Alexandria-Solstice and Alexandria-Equinox went to the park, Alexandria-Solstice bought ice cream for Alex"
+    # test_string = "1. e4 e5 2. Nf3 Nc6 3. Bc4"
+    # test_string = " pourtant je ne sais pas pourquoi "
+    test_string_him = " He didn't understand, so I told"
+    test_string_her = " She didn't understand, so I told"
+
+    test_string_his = "He took something that wasn't"
+    test_string_hers = "She took something that wasn't"
+
+    # resid = pickle.load(open('resid.p', 'rb'))
+    # resid_zeros = torch.zeros(resid.shape)
+
+    # print(resid_zeros[0][0][0])
+    # resid_zeros[0][0][0] -= 1.
+
+    # # visualize_tensor(resid_zeros, 'hello')
+
+    # def get_output(mod_vector):
+    #     demo_logits = demo_gpt2('abcd', load=True, load_with_mod_vector = mod_vector)
+
+    #     return reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmax())
+
+    resid_his = pickle.load(open(f'resid_his_start.p', 'rb')).detach().numpy()
+    resid_hers = pickle.load(open(f'resid_hers_start.p', 'rb')).detach().numpy()
+    resid_him = pickle.load(open(f'resid_him_start.p', 'rb')).detach().numpy()
+    resid_her = pickle.load(open(f'resid_her_start.p', 'rb')).detach().numpy()      
+
+    arr_his_hers = resid_his - resid_hers
+    arr_him_her = resid_him - resid_her
+
+    arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
+    arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
+
+    for i in range(12):
+        resid_his = pickle.load(open(f'resid_his_{i}.p', 'rb')).detach().numpy()
+        resid_hers = pickle.load(open(f'resid_hers_{i}.p', 'rb')).detach().numpy()
+        resid_him = pickle.load(open(f'resid_him_{i}.p', 'rb')).detach().numpy()
+        resid_her = pickle.load(open(f'resid_her_{i}.p', 'rb')).detach().numpy()        
+
+        arr_his_hers = resid_his - resid_hers
+        arr_him_her = resid_him - resid_her
+
+        # print(arr.shape)
+
+        # Reshape the array to (9, 768) for ease of plotting
+        arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
+        arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
+
+        plt.figure(figsize=(10, 6))
+
+        # Loop over each of the 9 arrays
+        for j in range(arr_his_hers_reshaped.shape[0]):                
+            # Plot the i-th array
+            if j != 1:
+            # if True:
+                plt.plot(np.multiply(arr_his_hers_reshaped[j], arr_him_her_reshaped[j]), label=f'product array {j}')
+                # plt.plot(arr_his_hers_reshaped[j], label=f'Array his/hers {j}')
+        # for j in range(arr_him_her_reshaped.shape[0]):
+        #     if j == 3:
+        #     # if True:
+        #         plt.plot(arr_him_her_reshaped[j], label=f'Array him/her {j}')
+        
+
+        plt.title(f'Plot of {i}')
+        plt.xlabel('Index')
+        plt.ylabel('Value')
+        plt.legend() # Show legend to identify arrays
+        plt.show()
+
+    raise Exception()
+
+    print(get_output(resid_zeros))
+    raise Exception()
+
+    for i in tqdm.tqdm(range(5)):
+        test_tokens_him = cuda(reference_gpt2.to_tokens(test_string_him))
+        print(reference_gpt2.to_str_tokens(test_tokens_him))
+
+        demo_logits = demo_gpt2(test_tokens_him, save_with_prefix='him')
+        test_tokens_her = cuda(reference_gpt2.to_tokens(test_string_her))
+        print(reference_gpt2.to_str_tokens(test_tokens_her))
+
+        demo_logits = demo_gpt2(test_tokens_her, save_with_prefix='her')
+
+        # Get the logits for the last predicted token
+        last_logits = demo_logits[-1, -1]
+        # Apply softmax to convert the logits to probabilities
+        probabilities = torch.nn.functional.softmax(last_logits, dim=0).detach().numpy()
+        
+        # Get the indices of the top 10 probabilities
+        topk_indices = np.argpartition(probabilities, -10)[-10:]
+        # Get the top 10 probabilities
+        topk_probabilities = probabilities[topk_indices]
+        # Get the top 10 tokens
+        topk_tokens = [reference_gpt2.tokenizer.decode(i) for i in topk_indices]
+
+        # Print the top 10 tokens and their probabilities
+        for token, probability in zip(topk_tokens, topk_probabilities):
+            print(f"Token: {token}, Probability: {probability}")
+
+        # Get the most probable next token and append it to the test string
+        most_probable_next_token = reference_gpt2.tokenizer.decode(last_logits.argmax())
+
+        raise Exception()
+
+        test_string_her += most_probable_next_token
+
+        # if i == 0:
+        #     test_string += ' Tam'
+        # else:
+        #     test_string += most_probable_next_token
+
+    # for i in tqdm.tqdm(range(5)):
+    #     test_tokens = cuda(reference_gpt2.to_tokens(test_string))
+    #     print(reference_gpt2.to_str_tokens(test_tokens))
+
+    #     demo_logits = demo_gpt2(test_tokens)#, display=i==0, load=i==0, load_with_mod_vector = None)
+    #     print(demo_logits[-1, -1].shape)
+        
+    #     logits = demo_logits[-1, -1].detach().numpy()
+    #     # running_probabilities = np.multiply(running_probabilities, logits)
+    #     # running_probabilities = logits
+    #     # adjusted_probabilities = logits - running_probabilities
+    #     # running_probabilities = running_probabilities * i / (i + 1) + logits / (i + 1)
+    #     # running_probabilities = logits
+
+    #     # test_string += reference_gpt2.tokenizer.decode(argmin_excluding_weird_tokens(torch.from_numpy(adjusted_probabilities)))
+
+    #     # print(demo_logits[-1, -1][demo_logits[-1, -1].argmax()])
+
+
+
+    #     test_string += reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmax())
+
+    #     # test_string += reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmin())
+    #     # test_string += reference_gpt2.tokenizer.decode(argmin_excluding_weird_tokens(demo_logits[-1, -1]))
+
+    print(test_string)
+    raise Exception()
+    
+
 
 if False:
 
