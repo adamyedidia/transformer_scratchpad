@@ -695,16 +695,16 @@ if True:
 
     #     return reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmax())
 
-    resid_his = pickle.load(open(f'resid_his_start.p', 'rb')).detach().numpy()
-    resid_hers = pickle.load(open(f'resid_hers_start.p', 'rb')).detach().numpy()
-    resid_him = pickle.load(open(f'resid_him_start.p', 'rb')).detach().numpy()
-    resid_her = pickle.load(open(f'resid_her_start.p', 'rb')).detach().numpy()      
+    # resid_his = pickle.load(open(f'resid_his_start.p', 'rb')).detach().numpy()
+    # resid_hers = pickle.load(open(f'resid_hers_start.p', 'rb')).detach().numpy()
+    # resid_him = pickle.load(open(f'resid_him_start.p', 'rb')).detach().numpy()
+    # resid_her = pickle.load(open(f'resid_her_start.p', 'rb')).detach().numpy()      
 
-    arr_his_hers = resid_his - resid_hers
-    arr_him_her = resid_him - resid_her
+    # arr_his_hers = resid_his - resid_hers
+    # arr_him_her = resid_him - resid_her
 
-    arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
-    arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
+    # arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
+    # arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
 
     for i in range(12):
         resid_his = pickle.load(open(f'resid_his_{i}.p', 'rb')).detach().numpy()
