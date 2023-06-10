@@ -17,13 +17,13 @@ M1_MAC = True
 import einops
 from fancy_einsum import einsum
 from dataclasses import dataclass
-from easy_transformer import EasyTransformer
+# from easy_transformer import EasyTransformer
 from transformer_lens import HookedTransformer
 import torch
 import torch.nn as nn
 import numpy as np
 import math
-from easy_transformer.utils import get_corner, gelu_new, tokenize_and_concatenate
+from transformer_lens.utils import get_corner, gelu_new, tokenize_and_concatenate
 # from easy_transformer import loading_from_pretrained as loading
 # from easy_transformer.loading_from_pretrained import function_or_class_you_want as loading
 from transformer_lens import loading_from_pretrained as loading
