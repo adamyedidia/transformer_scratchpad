@@ -439,6 +439,8 @@ class DemoTransformer(nn.Module):
             # print(pos_embed.shape)
             # visualize_tensor(pos_embed, "Positional Embedding")
             residual = embed + pos_embed
+            pickle.dump(residual, open(f'resid_{save_with_prefix}_start', 'wb'))
+
         # print(residual.shape)
         for i, block in enumerate(self.blocks):
             residual = block(residual)
@@ -674,11 +676,11 @@ if True:
     # test_string = "When Alexandria-Solstice and Alexandria-Equinox went to the park, Alexandria-Solstice bought ice cream for Alex"
     # test_string = "1. e4 e5 2. Nf3 Nc6 3. Bc4"
     # test_string = " pourtant je ne sais pas pourquoi "
-    # test_string_him = " He didn't understand, so I told"
-    # test_string_her = " She didn't understand, so I told"
+    test_string_him = " He didn't understand, so I told"
+    test_string_her = " She didn't understand, so I told"
 
-    # test_string_his = "He took something that wasn't"
-    # test_string_hers = "She took something that wasn't"
+    test_string_his = "He took something that wasn't"
+    test_string_hers = "She took something that wasn't"
 
     # resid = pickle.load(open('resid.p', 'rb'))
     # resid_zeros = torch.zeros(resid.shape)
@@ -692,6 +694,17 @@ if True:
     #     demo_logits = demo_gpt2('abcd', load=True, load_with_mod_vector = mod_vector)
 
     #     return reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmax())
+
+    resid_his = pickle.load(open(f'resid_his_start.p', 'rb')).detach().numpy()
+    resid_hers = pickle.load(open(f'resid_hers_start.p', 'rb')).detach().numpy()
+    resid_him = pickle.load(open(f'resid_him_start.p', 'rb')).detach().numpy()
+    resid_her = pickle.load(open(f'resid_her_start.p', 'rb')).detach().numpy()      
+
+    arr_his_hers = resid_his - resid_hers
+    arr_him_her = resid_him - resid_her
+
+    arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
+    arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
 
     for i in range(12):
         resid_his = pickle.load(open(f'resid_his_{i}.p', 'rb')).detach().numpy()
@@ -711,15 +724,16 @@ if True:
         plt.figure(figsize=(10, 6))
 
         # Loop over each of the 9 arrays
-        for j in range(arr_his_hers_reshaped.shape[0]):
+        for j in range(arr_his_hers_reshaped.shape[0]):                
             # Plot the i-th array
             if j != 1:
             # if True:
-                plt.plot(arr_his_hers_reshaped[j], label=f'Array his/hers {j}')
-        for j in range(arr_him_her_reshaped.shape[0]):
-            if j != 1:
-            # if True:
-                plt.plot(arr_him_her_reshaped[j], label=f'Array him/her {j}')
+                plt.plot(np.multiply(arr_his_hers_reshaped[j], arr_him_her_reshaped[j]), label=f'product array {j}')
+                # plt.plot(arr_his_hers_reshaped[j], label=f'Array his/hers {j}')
+        # for j in range(arr_him_her_reshaped.shape[0]):
+        #     if j == 3:
+        #     # if True:
+        #         plt.plot(arr_him_her_reshaped[j], label=f'Array him/her {j}')
         
 
         plt.title(f'Plot of {i}')
@@ -728,20 +742,20 @@ if True:
         plt.legend() # Show legend to identify arrays
         plt.show()
 
-    # raise Exception()
+    raise Exception()
 
-    # print(get_output(resid_zeros))
-    # raise Exception()
+    print(get_output(resid_zeros))
+    raise Exception()
 
     for i in tqdm.tqdm(range(5)):
-        test_tokens_him = cuda(reference_gpt2.to_tokens(test_string_his))
+        test_tokens_him = cuda(reference_gpt2.to_tokens(test_string_him))
         print(reference_gpt2.to_str_tokens(test_tokens_him))
 
-        demo_logits = demo_gpt2(test_tokens_him, save_with_prefix='his')
-        test_tokens_her = cuda(reference_gpt2.to_tokens(test_string_hers))
+        demo_logits = demo_gpt2(test_tokens_him, save_with_prefix='him')
+        test_tokens_her = cuda(reference_gpt2.to_tokens(test_string_her))
         print(reference_gpt2.to_str_tokens(test_tokens_her))
 
-        demo_logits = demo_gpt2(test_tokens_her, save_with_prefix='hers')
+        demo_logits = demo_gpt2(test_tokens_her, save_with_prefix='her')
 
         # Get the logits for the last predicted token
         last_logits = demo_logits[-1, -1]
