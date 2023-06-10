@@ -746,16 +746,27 @@ if True:
 
             # indexes andrea thinks are important:
             indexes_of_interest_andrea = [447, 481, 373, 459, 546, 558, 737, 200, 366, 726, ]
+
+            # trying to update all locations at once
             andrea_small_update_array = np.reshape(np.zeros(arr_him_her.shape),
                                                    (1, arr_him_her.shape[1], arr_him_her.shape[2]))
-
             for j in indexes_of_interest_andrea:
                 for k in range(9):
                     andrea_small_update_array[0][k][j] = arr_him_her[0][k][j] * 100
-
-            print("=====Printing Andrea Small Update Array")
-            print(andrea_small_update_array)
             pickle.dump(andrea_small_update_array, open(f'andrea_small_update_{i}.p', 'wb'))
+
+
+            # doing one location looking only layer 7 and 8
+            layers_of_andrea_interest = [7, 8]
+            if i in layers_of_andrea_interest:
+                for j in indexes_of_interest_andrea:
+                    # create an pickle an update in just this index
+                    andrea_one_entry_update = np.reshape(np.zeros(arr_him_her.shape),
+                                                         (1, arr_him_her.shape[1], arr_him_her.shape[2]))
+                    for k in range(9):
+                        andrea_one_entry_update[0][k][j] = arr_him_her[0][k][j] * 100
+                    pickle.dump(andrea_one_entry_update, open(f'andrea_layer_{i}_index{j}_all_9_tokens.p', 'wb'))
+                    print(f'Pickled layer {i} index {j}')
 
             # print(arr.shape)
 
@@ -849,9 +860,6 @@ if True:
         topk_probabilities = probabilities[topk_indices]
         # Get the top n tokens
         topk_tokens = [reference_gpt2.tokenizer.decode(i) for i in topk_indices]
-        for i in topk_indices:
-            if reference_gpt2.tokenizer.decode(i) in [' him', ' her', ' them']:
-                print(f'index: {i} token: {reference_gpt2.tokenizer.decode(i)}')
 
         prob_token_list = list(zip(topk_probabilities, topk_tokens))
         prob_token_list.sort()
@@ -866,7 +874,8 @@ if True:
     def layer_intervention_pairs_run_all(
             test_tokens_in,
             list_of_layer_intervention_pairs,
-            compare_on_these_token_indices
+            compare_on_these_token_indices,
+            if_token_above_thresh_print=(None, 0),
     ):
         print("==== Default test ====")
         demo_logits_def = demo_gpt2(test_tokens_in, intervene_in_resid_at_layer=None,
@@ -882,19 +891,35 @@ if True:
 
             intervention_deltas.append((layer, intervention_file_name, new_token_probs))
 
+        good_interventions = []
         for layer, intervention_file_name, new_token_probs in intervention_deltas:
             token_names = [reference_gpt2.tokenizer.decode(i) for i in compare_on_these_token_indices]
             print(f'Change For Intervention {intervention_file_name} on Layer {layer}:')
             for new_prob,old_prob, name in zip(new_token_probs, default_token_probs, token_names):
+                if name == if_token_above_thresh_print[0] and new_prob > if_token_above_thresh_print[1]:
+                    good_interventions.append((intervention_file_name, layer))
                 print(f' Token {name}: {old_prob-new_prob} (from {old_prob} to {new_prob})')
 
 
+        print('******* Good Interventions *************')
+        for intervention_file_name, layer in good_interventions:
+            print(f'Intervention {intervention_file_name} on Layer {layer} is good.')
+
+
     print("=====Andrea Code ========")
+
+    # old_intervention_list  = [(i, f'andrea_small_update_{i}.p') for i in range(12)]
     test_tokens_her = cuda(reference_gpt2.to_tokens(test_string_her))
+    intervention_list = []
+    indexes_of_interest_andrea = [546, 200,]
+    for layer in [7, 8]:
+        for index in indexes_of_interest_andrea:
+            intervention_list.append((layer, f'andrea_layer_{layer}_index{index}_all_9_tokens.p'))
     layer_intervention_pairs_run_all(
         test_tokens_her,
-        [(i, f'andrea_small_update_{i}.p') for i in range(12)],
+        intervention_list,
         [606, 607, 683],
+        (' him', 0.7),
     )
 
     raise Exception("Andrea Code Halt")
