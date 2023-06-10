@@ -706,7 +706,7 @@ if True:
 
     #     return reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmax())
 
-    if True:
+    if False:
 
         resid_his = pickle.load(open(f'resid_his_start.p', 'rb')).detach().numpy()
         resid_hers = pickle.load(open(f'resid_hers_start.p', 'rb')).detach().numpy()
@@ -836,6 +836,68 @@ if True:
 
     # print(get_output(resid_zeros))
     # raise Exception()
+
+    def print_top_n_last_token_from_logits(my_logits,n, compare_on_these_token_indices):
+        # Get the logits for the last predicted token
+        last_logits = my_logits[-1, -1]
+        # Apply softmax to convert the logits to probabilities
+        probabilities = torch.nn.functional.softmax(last_logits, dim=0).detach().numpy()
+
+        # Get the indices of the top n probabilities
+        topk_indices = np.argpartition(probabilities, -n)[-n:]
+        # Get the top n probabilities
+        topk_probabilities = probabilities[topk_indices]
+        # Get the top n tokens
+        topk_tokens = [reference_gpt2.tokenizer.decode(i) for i in topk_indices]
+        for i in topk_indices:
+            if reference_gpt2.tokenizer.decode(i) in [' him', ' her', ' them']:
+                print(f'index: {i} token: {reference_gpt2.tokenizer.decode(i)}')
+
+        prob_token_list = list(zip(topk_probabilities, topk_tokens))
+        prob_token_list.sort()
+        # Print the top n tokens and their probabilities
+        for probability, token in prob_token_list:
+            print(f"Token: {token}, Probability: {probability}")
+        if compare_on_these_token_indices:
+            return [probabilities[index] for index in compare_on_these_token_indices]
+        else:
+            return None
+
+    def layer_intervention_pairs_run_all(
+            test_tokens_in,
+            list_of_layer_intervention_pairs,
+            compare_on_these_token_indices
+    ):
+        print("==== Default test ====")
+        demo_logits_def = demo_gpt2(test_tokens_in, intervene_in_resid_at_layer=None,
+                                resid_intervention_filename=None)
+        default_token_probs = print_top_n_last_token_from_logits(demo_logits_def, 5, compare_on_these_token_indices)
+
+        intervention_deltas = []
+        for layer, intervention_file_name in list_of_layer_intervention_pairs:
+            print(f"==== Intervention layer {layer} test file {intervention_file_name}====")
+            demo_logits_int = demo_gpt2(test_tokens_in, intervene_in_resid_at_layer=layer,
+                                    resid_intervention_filename=intervention_file_name,)
+            new_token_probs = print_top_n_last_token_from_logits(demo_logits_int, 5,  compare_on_these_token_indices)
+
+            intervention_deltas.append((layer, intervention_file_name, new_token_probs))
+
+        for layer, intervention_file_name, new_token_probs in intervention_deltas:
+            token_names = [reference_gpt2.tokenizer.decode(i) for i in compare_on_these_token_indices]
+            print(f'Change For Intervention {intervention_file_name} on Layer {layer}:')
+            for new_prob,old_prob, name in zip(new_token_probs, default_token_probs, token_names):
+                print(f' Token {name}: {old_prob-new_prob} (from {old_prob} to {new_prob})')
+
+
+    print("=====Andrea Code ========")
+    test_tokens_her = cuda(reference_gpt2.to_tokens(test_string_her))
+    layer_intervention_pairs_run_all(
+        test_tokens_her,
+        [(i, f'andrea_small_update_{i}.p') for i in range(12)],
+        [606, 607, 683],
+    )
+
+    raise Exception("Andrea Code Halt")
 
     for i in tqdm.tqdm(range(5)):
         # test_tokens_him = cuda(reference_gpt2.to_tokens(test_string_his))
