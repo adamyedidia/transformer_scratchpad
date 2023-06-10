@@ -443,7 +443,7 @@ class DemoTransformer(nn.Module):
             residual = embed + pos_embed
             if intervene_in_resid_at_layer == 'start' and resid_intervention_filename:
                 residual_intervention = pickle.load(open(resid_intervention_filename, 'rb'))
-                residual = residual + torch.from_numpy(residual_intervention)
+                residual = (residual + torch.from_numpy(residual_intervention)).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_start.p', 'wb'))
 
@@ -452,7 +452,8 @@ class DemoTransformer(nn.Module):
             residual = block(residual)
             if i == intervene_in_resid_at_layer and resid_intervention_filename:
                 residual_intervention = pickle.load(open(resid_intervention_filename, 'rb'))
-                residual = residual + torch.from_numpy(residual_intervention)
+                print('intervening!')
+                residual = (residual + torch.from_numpy(residual_intervention)).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_{i}.p', 'wb'))
             # print(residual)
@@ -686,7 +687,7 @@ if True:
     # test_string = "1. e4 e5 2. Nf3 Nc6 3. Bc4"
     # test_string = " pourtant je ne sais pas pourquoi "
     # test_string_him = " He didn't understand, so I told"
-    # test_string_her = " She didn't understand, so I told"
+    test_string_her = " She didn't understand, so I told"
     # test_string_her = " Mary didn't understand, so I told"
 
     # test_string_his = "He took something that wasn't"
@@ -720,7 +721,7 @@ if True:
         arr_him_her = resid_him - resid_her
 
         zeros_arr_him_her = np.reshape(np.zeros(arr_him_her.shape), (1, arr_him_her.shape[1], arr_him_her.shape[2]))
-        zeros_arr_him_her[0][2][447] = -10
+        zeros_arr_him_her[0][2][447] = -10.0
         pickle.dump(zeros_arr_him_her, open('layer_2_position_447_neg_10.p', 'wb'))
 
 
@@ -755,7 +756,7 @@ if True:
 
             arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
             arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
-            zeros_arr_him_her = zeros_arr_him_her.reshape(zeros_arr_him_her.shape[1:])
+            zeros_arr_him_her_reshaped = zeros_arr_him_her.reshape(zeros_arr_him_her.shape[1:])
 
             plt.figure(figsize=(10, 6))
 
@@ -778,7 +779,7 @@ if True:
             plt.legend() # Show legend to identify arrays
             plt.show()
 
-            sleep(0.1)
+            sleep(0.5)
 
             # 373, 447
 
@@ -801,19 +802,19 @@ if True:
             plt.legend() # Show legend to identify arrays
             plt.show()
 
-            for j in range(zeros_arr_him_her.shape[0]):                
+            for j in range(zeros_arr_him_her_reshaped.shape[0]):                
                 # Plot the i-th array
                 if j != 1:
                 # if True:
                     # plt.plot(np.multiply(arr_his_hers_reshaped[j], arr_him_her_reshaped[j]), label=f'product array {j}')
-                    plt.plot(zeros_arr_him_her[j], label=f'zeros Array him/her {j}')
+                    plt.plot(zeros_arr_him_her_reshaped[j], label=f'zeros Array him/her {j}')
 
             # for j in range(arr_him_her_reshaped.shape[0]):
             #     if j == 3:
             #     # if True:
             #         plt.plot(arr_him_her_reshaped[j], label=f'Array him/her {j}')
             
-            sleep(0.1)
+            sleep(0.5)
 
             plt.title(f'Plot of {i}')
             plt.xlabel('Index')
@@ -821,7 +822,7 @@ if True:
             plt.legend() # Show legend to identify arrays
             plt.show()            
 
-            sleep(0.1)
+            sleep(0.5)
 
         print("=====Printing Andrea Small Update Array")
         print(andrea_small_update_array)
@@ -844,8 +845,10 @@ if True:
         #                         resid_intervention_filename='resid_him_minus_her_start.p')
         # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer='start',
         #                         resid_intervention_filename='resid_him_minus_her_start_half.p')        
-        demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=None,
-                                resid_intervention_filename=None)
+        # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=None,
+        #                         resid_intervention_filename=None)
+        demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=1,
+                        resid_intervention_filename='layer_2_position_447_neg_10.p')
 
         # Get the logits for the last predicted token
         last_logits = demo_logits[-1, -1]
