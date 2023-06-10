@@ -452,7 +452,7 @@ class DemoTransformer(nn.Module):
             residual = block(residual)
             if i == intervene_in_resid_at_layer and resid_intervention_filename:
                 residual_intervention = pickle.load(open(resid_intervention_filename, 'rb'))
-                residual = (residual + torch.from_numpy(residual_intervention)).float()
+                residual = (residual + torch.from_numpy(residual_intervention)*10.0).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_{i}.p', 'wb'))
             # print(residual)
