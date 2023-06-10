@@ -452,7 +452,8 @@ class DemoTransformer(nn.Module):
             residual = block(residual)
             if i == intervene_in_resid_at_layer and resid_intervention_filename:
                 residual_intervention = pickle.load(open(resid_intervention_filename, 'rb'))
-                residual = (residual + torch.from_numpy(residual_intervention)*10.0).float()
+                print('intervening!')
+                residual = (residual + torch.from_numpy(residual_intervention)).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_{i}.p', 'wb'))
             # print(residual)
@@ -705,7 +706,7 @@ if True:
 
     #     return reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmax())
 
-    if False:
+    if True:
 
         resid_his = pickle.load(open(f'resid_his_start.p', 'rb')).detach().numpy()
         resid_hers = pickle.load(open(f'resid_hers_start.p', 'rb')).detach().numpy()
