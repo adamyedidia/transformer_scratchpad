@@ -688,7 +688,7 @@ if True:
     # test_string = " pourtant je ne sais pas pourquoi "
     # test_string_him = " He didn't understand, so I told"
     test_string_her = " She didn't understand, so I told"
-    # test_string_her = " Mary didn't understand, so I told"
+    test_string_mary = " Mary didn't understand, so I told"
 
     # test_string_his = "He took something that wasn't"
     # test_string_hers = "She took something that wasn't"
@@ -909,14 +909,14 @@ if True:
     print("=====Andrea Code ========")
 
     # old_intervention_list  = [(i, f'andrea_small_update_{i}.p') for i in range(12)]
-    test_tokens_her = cuda(reference_gpt2.to_tokens(test_string_her))
+    test_tokens_mary = cuda(reference_gpt2.to_tokens(test_string_mary))
     intervention_list = []
     indexes_of_interest_andrea = [546, 200,]
     for layer in [7, 8]:
         for index in indexes_of_interest_andrea:
             intervention_list.append((layer, f'andrea_layer_{layer}_index{index}_all_9_tokens.p'))
     layer_intervention_pairs_run_all(
-        test_tokens_her,
+        test_tokens_mary,
         intervention_list,
         [606, 607, 683],
         (' him', 0.7),
