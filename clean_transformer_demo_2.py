@@ -751,7 +751,7 @@ if True:
 
             for j in indexes_of_interest_andrea:
                 for k in range(9):
-                    andrea_small_update_array[0][k][j] = arr_him_her[0][k][j]
+                    andrea_small_update_array[0][k][j] = arr_him_her[0][k][j] * 100
 
             print("=====Printing Andrea Small Update Array")
             print(andrea_small_update_array)
