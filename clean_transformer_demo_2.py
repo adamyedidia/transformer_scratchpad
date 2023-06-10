@@ -88,7 +88,7 @@ def visualize_tensor(tensor, title, dim=0, cmap="viridis", max_cols=5, scaling_f
                 ax = axes[col]
         ax.axis("off")
 
-    plt.show()
+    #plt.show()
 
 # reference_gpt2 = EasyTransformer.from_pretrained("gpt2-small", fold_ln=False, center_unembed=False, center_writing_weights=False)
 
@@ -428,7 +428,7 @@ class DemoTransformer(nn.Module):
             residual = pickle.load(open('resid.p', 'rb'))
 
             plt.plot(residual.detach().numpy().flatten())
-            plt.show()
+            #plt.show()
 
             if load_with_mod_vector is not None:
                 residual = residual + load_with_mod_vector
@@ -725,9 +725,7 @@ if True:
         pickle.dump(zeros_arr_him_her, open('layer_2_position_447_neg_10.p', 'wb'))
 
 
-        # indexes andrea thinks are important:
-        indexes_of_interest_andrea = [447, 481, 373, 459, 546, 558, 737, 200, 366, 726,]
-        andrea_small_update_array = np.reshape(np.zeros(arr_him_her.shape), (1, arr_him_her.shape[1], arr_him_her.shape[2]))
+
 
 
         arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
@@ -735,7 +733,7 @@ if True:
 
         for j in range(arr_his_hers_reshaped.shape[0]):           
             plt.plot(arr_his_hers_reshaped[j], label=f'array {j}' )
-        plt.show()
+        #plt.show()
 
         for i in range(12):
             resid_his = pickle.load(open(f'resid_his_{i}.p', 'rb')).detach().numpy()
@@ -746,8 +744,18 @@ if True:
             arr_his_hers = resid_his - resid_hers
             arr_him_her = resid_him - resid_her
 
+            # indexes andrea thinks are important:
+            indexes_of_interest_andrea = [447, 481, 373, 459, 546, 558, 737, 200, 366, 726, ]
+            andrea_small_update_array = np.reshape(np.zeros(arr_him_her.shape),
+                                                   (1, arr_him_her.shape[1], arr_him_her.shape[2]))
+
             for j in indexes_of_interest_andrea:
-                andrea_small_update_array[0][i][j] = arr_his_hers[0][0][j]
+                for k in range(9):
+                    andrea_small_update_array[0][k][j] = arr_him_her[0][k][j]
+
+            print("=====Printing Andrea Small Update Array")
+            print(andrea_small_update_array)
+            pickle.dump(andrea_small_update_array, open(f'andrea_small_update_{i}.p', 'wb'))
 
             # print(arr.shape)
 
@@ -777,7 +785,7 @@ if True:
             plt.xlabel('Index')
             plt.ylabel('Value')
             plt.legend() # Show legend to identify arrays
-            plt.show()
+            #plt.show()
 
             sleep(0.5)
 
@@ -800,7 +808,7 @@ if True:
             plt.xlabel('Index')
             plt.ylabel('Value')
             plt.legend() # Show legend to identify arrays
-            plt.show()
+            #plt.show()
 
             for j in range(zeros_arr_him_her_reshaped.shape[0]):                
                 # Plot the i-th array
@@ -820,13 +828,9 @@ if True:
             plt.xlabel('Index')
             plt.ylabel('Value')
             plt.legend() # Show legend to identify arrays
-            plt.show()            
+            #plt.show()
 
             sleep(0.5)
-
-        print("=====Printing Andrea Small Update Array")
-        print(andrea_small_update_array)
-        pickle.dump(andrea_small_update_array, open('all_layers_special_index_update.p', 'wb'))
 
         raise Exception()
 
