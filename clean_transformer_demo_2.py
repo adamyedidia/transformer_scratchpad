@@ -768,6 +768,20 @@ if True:
                     pickle.dump(andrea_one_entry_update, open(f'andrea_layer_{i}_index{j}_all_9_tokens.p', 'wb'))
                     print(f'Pickled layer {i} index {j}')
 
+            # only one token, one layer, one model location
+            layers_of_andrea_interest = [7, 8]
+            if i in layers_of_andrea_interest:
+                for j in indexes_of_interest_andrea:
+                    # create a pickle an update in just this index
+                    for k in range(9):
+                        andrea_one_entry_update = np.reshape(np.zeros(arr_him_her.shape),
+                                                             (1, arr_him_her.shape[1], arr_him_her.shape[2]))
+                        andrea_one_entry_update[0][k][j] = arr_him_her[0][k][j] * 100
+                        assert sum(sum(sum(andrea_one_entry_update))) == arr_him_her[0][k][j] * 100
+
+                        pickle.dump(andrea_one_entry_update, open(f'andrea_layer_{i}_index_{j}_token_{k}.p', 'wb'))
+                        print(f'Pickled layer {i} index {j} token {k}')
+
             # print(arr.shape)
 
             # Reshape the array to (9, 768) for ease of plotting
@@ -911,15 +925,21 @@ if True:
     # old_intervention_list  = [(i, f'andrea_small_update_{i}.p') for i in range(12)]
     test_tokens_mary = cuda(reference_gpt2.to_tokens(test_string_mary))
     intervention_list = []
-    indexes_of_interest_andrea = [546, 200,]
-    for layer in [7, 8]:
+    indexes_of_interest_andrea = [546,]
+    for layer in [8,]:
         for index in indexes_of_interest_andrea:
-            intervention_list.append((layer, f'andrea_layer_{layer}_index{index}_all_9_tokens.p'))
+            for token_number in range(9):
+                intervention_list.append(
+                    (
+                        layer,
+                        f'andrea_layer_{layer}_index_{index}_token_{token_number}.p'
+                    )
+                )
     layer_intervention_pairs_run_all(
         test_tokens_mary,
         intervention_list,
         [606, 607, 683],
-        (' him', 0.7),
+        (' him', 0.1),
     )
 
     raise Exception("Andrea Code Halt")
