@@ -724,6 +724,11 @@ if True:
         pickle.dump(zeros_arr_him_her, open('layer_2_position_447_neg_10.p', 'wb'))
 
 
+        # indexes andrea thinks are important:
+        indexes_of_interest_andrea = [447, 481, 373, 459, 546, 558, 737, 200, 366, 726,]
+        andrea_small_update_array = np.reshape(np.zeros(arr_him_her.shape), (1, arr_him_her.shape[1], arr_him_her.shape[2]))
+
+
         arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
         arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
 
@@ -739,6 +744,9 @@ if True:
 
             arr_his_hers = resid_his - resid_hers
             arr_him_her = resid_him - resid_her
+
+            for j in indexes_of_interest_andrea:
+                andrea_small_update_array[0][i][j] = arr_his_hers[0][0][j]
 
             # print(arr.shape)
 
@@ -814,6 +822,10 @@ if True:
             plt.show()            
 
             sleep(0.1)
+
+        print("=====Printing Andrea Small Update Array")
+        print(andrea_small_update_array)
+        pickle.dump(andrea_small_update_array, open('all_layers_special_index_update.p', 'wb'))
 
         raise Exception()
 
