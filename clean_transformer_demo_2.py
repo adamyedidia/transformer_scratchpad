@@ -940,6 +940,11 @@ if True:
         ' She came early, so I looked for',
         ' Mary came early, so I looked for',
         ' Andrea came early, so I looked for',
+        ' She has a big crush. She loves',
+        ' He has a big crush. He loves',  # this one doesn't work very well, including to demonstrate failures
+        ' She is a good worker. Please hire',
+        ' She got lost. I need to help',
+        " He didn't understand, so I told",  # pushes towards him (starts out 92% him) basically obliterates her
     ]
 
     for input_string in input_strings:
