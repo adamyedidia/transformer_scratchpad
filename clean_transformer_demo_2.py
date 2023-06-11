@@ -739,15 +739,22 @@ if True:
             resid_his = pickle.load(open(f'resid_his_{i}.p', 'rb')).detach().numpy()
             resid_hers = pickle.load(open(f'resid_hers_{i}.p', 'rb')).detach().numpy()
             resid_him = pickle.load(open(f'resid_him_{i}.p', 'rb')).detach().numpy()
-            resid_her = pickle.load(open(f'resid_her_{i}.p', 'rb')).detach().numpy()        
+            resid_her = pickle.load(open(f'resid_her_{i}.p', 'rb')).detach().numpy()
+
+            resid_her_her_her = pickle.load(open(f'resid_her_her_her_{i}.p', 'rb')).detach().numpy()
+            resid_him_him_him = pickle.load(open(f'resid_his_his_his_{i}.p', 'rb')).detach().numpy()
 
             arr_his_hers = resid_his - resid_hers
             arr_him_her = resid_him - resid_her
+
+            arr_her3_minus_his3 = resid_her_her_her - resid_him_him_him
 
             # indexes andrea thinks are important:
             indexes_of_interest_andrea = [447, 481, 373, 459, 546, 558, 737, 200, 366, 726, ]
 
             pickle.dump(arr_him_her, open(f'him_minus_her_layer_{i}.p','wb'))
+            pickle.dump(arr_him_her + arr_her3_minus_his3, open(f'him_subject_not_repeat_{i}.p','wb'))
+
 
             # trying to update all locations at once
             andrea_small_update_array = np.reshape(np.zeros(arr_him_her.shape),
@@ -930,8 +937,9 @@ if True:
     #                     (8,f'andrea_layer_{8}_index{200}_all_9_tokens.p'),
     #                     (7,f'andrea_layer_{7}_index{200}_all_9_tokens.p')]
 
-    intervention_list = [(i, f'him_minus_her_layer_{i}.p') for i in range(7,9)]
+    intervention_list = [(8, f'him_minus_her_layer_{8}.p'), (8, f'him_subject_not_repeat_8.p')]
 
+    # intervention_list = [(8,f'andrea_layer_{8}_index{200}_all_9_tokens.p'),]
     input_strings = [
         " She didn't understand, so I told",
         " Mary didn't understand, so I told",
@@ -945,17 +953,17 @@ if True:
         ' She is a good worker. Please hire',
         ' She got lost. I need to help',
         " He didn't understand, so I told",  # pushes towards him (starts out 92% him) basically obliterates her
-    ]
-
-    his_hers_input_strings = [
         ' She took a blue book that wasn\'t',  # moves from hers to his! (using same offset as her to him)
         ' She was really sad, because she lost',  # moves his up but doesn't beat her
         ' Dan suggested a trade, but Sally refused',  # him moves up, but ' to' is still super popular
         ' Sally wished for a dog. She got',
-        ' Alice Jones? Sorry I don\'t know'
+        ' Alice Jones? Sorry I don\'t know',
+        ' her her her her her her her her',  #
+        ' girl girl girl girl girl girl girl girl',  # boy goes from ~2% to ~20%
+        ' Eve Eve Eve Eve Eve Eve Eve Eve'
     ]
 
-    for input_string in his_hers_input_strings:
+    for input_string in input_strings:
         print(f"****** Input String {input_string} **********")
         test_tokens = cuda(reference_gpt2.to_tokens(input_string))
         good_interventions = layer_intervention_pairs_run_all(
@@ -983,8 +991,10 @@ if True:
         #                         resid_intervention_filename='resid_him_minus_her_start_half.p')        
         # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=None,
         #                         resid_intervention_filename=None)
-        demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=1,
-                        resid_intervention_filename='layer_2_position_447_neg_10.p')
+        demo_logits = demo_gpt2(
+            cuda(reference_gpt2.to_tokens(' his his his his his his his his')),
+            save_with_prefix='his_his_his'
+        )
 
         # Get the logits for the last predicted token
         last_logits = demo_logits[-1, -1]
