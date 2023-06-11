@@ -918,29 +918,44 @@ if True:
         print('******* Good Interventions *************')
         for intervention_file_name, layer in good_interventions:
             print(f'Intervention {intervention_file_name} on Layer {layer} is good.')
+        return good_interventions
 
 
     print("=====Andrea Code ========")
 
     # old_intervention_list  = [(i, f'andrea_small_update_{i}.p') for i in range(12)]
-    test_tokens_mary = cuda(reference_gpt2.to_tokens(test_string_mary))
-    intervention_list = []
-    indexes_of_interest_andrea = [546,]
-    for layer in [8,]:
+    intervention_list = [(8,f'andrea_layer_{8}_index_{546}_token_{8}.p')]
+    indexes_of_interest_andrea = [200]
+    for layer in [8, 7]:
         for index in indexes_of_interest_andrea:
-            for token_number in range(9):
                 intervention_list.append(
                     (
                         layer,
-                        f'andrea_layer_{layer}_index_{index}_token_{token_number}.p'
+                        f'andrea_layer_{layer}_index{index}_all_9_tokens.p'
                     )
                 )
-    layer_intervention_pairs_run_all(
-        test_tokens_mary,
-        intervention_list,
-        [606, 607, 683],
-        (' him', 0.1),
-    )
+
+    input_strings = [
+        " She didn't understand, so I told",
+        " Mary didn't understand, so I told",
+        ' Mary tripped and fell so I grabbed',
+        ' She tripped and fell so I grabbed',
+        ' She came early, so I looked for',
+        ' Mary came early, so I looked for',
+        ' Andrea came early, so I looked for',
+    ]
+
+    for input_string in input_strings:
+        print(f"****** Input String {input_string} **********")
+        test_tokens = cuda(reference_gpt2.to_tokens(input_string))
+        good_interventions = layer_intervention_pairs_run_all(
+            test_tokens,
+            intervention_list,
+            [606, 607, 683],
+            (' him', 0.1),
+        )
+
+
 
     raise Exception("Andrea Code Halt")
 
