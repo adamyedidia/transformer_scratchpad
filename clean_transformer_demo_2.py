@@ -747,6 +747,8 @@ if True:
             # indexes andrea thinks are important:
             indexes_of_interest_andrea = [447, 481, 373, 459, 546, 558, 737, 200, 366, 726, ]
 
+            pickle.dump(arr_him_her, open(f'him_minus_her_layer_{i}.p','wb'))
+
             # trying to update all locations at once
             andrea_small_update_array = np.reshape(np.zeros(arr_him_her.shape),
                                                    (1, arr_him_her.shape[1], arr_him_her.shape[2]))
@@ -924,16 +926,11 @@ if True:
     print("=====Andrea Code ========")
 
     # old_intervention_list  = [(i, f'andrea_small_update_{i}.p') for i in range(12)]
-    intervention_list = [(8,f'andrea_layer_{8}_index_{546}_token_{8}.p')]
-    indexes_of_interest_andrea = [200]
-    for layer in [8, 7]:
-        for index in indexes_of_interest_andrea:
-                intervention_list.append(
-                    (
-                        layer,
-                        f'andrea_layer_{layer}_index{index}_all_9_tokens.p'
-                    )
-                )
+    #intervention_list = [(8,f'andrea_layer_{8}_index_{546}_token_{8}.p'),
+    #                     (8,f'andrea_layer_{8}_index{200}_all_9_tokens.p'),
+    #                     (7,f'andrea_layer_{7}_index{200}_all_9_tokens.p')]
+
+    intervention_list = [(i, f'him_minus_her_layer_{i}.p') for i in range(7,9)]
 
     input_strings = [
         " She didn't understand, so I told",
@@ -952,7 +949,7 @@ if True:
             test_tokens,
             intervention_list,
             [606, 607, 683],
-            (' him', 0.1),
+            (' him', 0.25),
         )
 
 
