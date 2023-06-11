@@ -947,7 +947,15 @@ if True:
         " He didn't understand, so I told",  # pushes towards him (starts out 92% him) basically obliterates her
     ]
 
-    for input_string in input_strings:
+    his_hers_input_strings = [
+        ' She took a blue book that wasn\'t',  # moves from hers to his! (using same offset as her to him)
+        ' She was really sad, because she lost',  # moves his up but doesn't beat her
+        ' Dan suggested a trade, but Sally refused',  # him moves up, but ' to' is still super popular
+        ' Sally wished for a dog. She got',
+        ' Alice Jones? Sorry I don\'t know'
+    ]
+
+    for input_string in his_hers_input_strings:
         print(f"****** Input String {input_string} **********")
         test_tokens = cuda(reference_gpt2.to_tokens(input_string))
         good_interventions = layer_intervention_pairs_run_all(
