@@ -421,7 +421,7 @@ class DemoTransformer(nn.Module):
         self.unembed = Unembed(cfg)
     
     def forward(self, tokens, display=False, save_with_prefix=None, load=False, load_with_mod_vector=None, 
-                intervene_in_resid_at_layer=None, resid_intervention_filename=None):
+                intervene_in_resid_at_layer=None, resid_intervention_filename=None, extra_value=None):
         # tokens [batch, position]
 
         if load:
@@ -443,7 +443,13 @@ class DemoTransformer(nn.Module):
             residual = embed + pos_embed
             if intervene_in_resid_at_layer == 'start' and resid_intervention_filename:
                 residual_intervention = pickle.load(open(resid_intervention_filename, 'rb'))
-                residual = (residual + torch.from_numpy(residual_intervention)).float()
+                # print('intervening at start!')
+                extra_value_array = np.zeros(residual_intervention.shape)
+                if extra_value is not None:
+                    index1, index2, index3 = extra_value[0]
+                    value_to_add = extra_value[1]
+                    extra_value_array[index1][index2][index3] += value_to_add
+                residual = (residual + torch.from_numpy(residual_intervention) + torch.from_numpy(extra_value_array)).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_start.p', 'wb'))
 
@@ -687,8 +693,31 @@ if True:
     # test_string = "1. e4 e5 2. Nf3 Nc6 3. Bc4"
     # test_string = " pourtant je ne sais pas pourquoi "
     # test_string_him = " He didn't understand, so I told"
-    test_string_her = " She didn't understand, so I told"
+    # test_string_her = " She didn't understand, so I told"
     # test_string_her = " Mary didn't understand, so I told"
+    # test_string_her = " John didn't understand, so I told"
+    # test_string_her = " The queen wanted more blankets, so I gave"
+    # test_string = ' the president had a stroke. James'
+
+    prompts = [
+        "Despite the nationwide tension, the President held an aura of calmness that resonated with James",
+        "In the silent White House corridor, the echoes of the President's words still lingered around James",
+        "The President, true to his reputation, made a decision that left an indelible mark on James",
+        "Once a doubter of the President's policies, a series of events triggered a change in James",
+        "The invitation to the President's private event arrived unexpectedly and left a curious impression on James",
+        "Over the years serving as a bodyguard, the President's true nature was slowly revealed to James",
+        "The President's decision to pardon individuals raised questions about James",
+        "The President's tweets often criticized James",        
+        "Among the bustling crowd, the President's speech struck a deeply personal chord within James",
+        "The secrets of the President, once unraveled, shifted the course of events for James",
+        "Behind the grandeur of the President, there lay a trail of sacrifices known only to James",
+        "The world watched as the President made history; a moment of profound significance for James"
+    ]
+
+    random_other_nouns = ['dog', 'cat', 'statue', 'robot', 'bug', 'boy', 'girl', 'man', 'woman', 'bird', 'orange', 'apple']
+
+    # test_string_king = ' The king decreed that'
+    # test_string_queen = ' The queen decreed that'
 
     # test_string_his = "He took something that wasn't"
     # test_string_hers = "She took something that wasn't"
@@ -705,137 +734,6 @@ if True:
     #     demo_logits = demo_gpt2('abcd', load=True, load_with_mod_vector = mod_vector)
 
     #     return reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmax())
-
-    if False:
-
-        resid_his = pickle.load(open(f'resid_his_start.p', 'rb')).detach().numpy()
-        resid_hers = pickle.load(open(f'resid_hers_start.p', 'rb')).detach().numpy()
-        resid_him = pickle.load(open(f'resid_him_start.p', 'rb')).detach().numpy()
-        resid_her = pickle.load(open(f'resid_her_start.p', 'rb')).detach().numpy()      
-
-        resid_him_minus_her_start = resid_him - resid_her
-        pickle.dump(resid_him_minus_her_start, open(f'resid_him_minus_her_start.p', 'wb'))
-        pickle.dump(resid_him_minus_her_start/2, open(f'resid_him_minus_her_start_half.p', 'wb'))
-
-        arr_his_hers = resid_his - resid_hers
-        arr_him_her = resid_him - resid_her
-
-        zeros_arr_him_her = np.reshape(np.zeros(arr_him_her.shape), (1, arr_him_her.shape[1], arr_him_her.shape[2]))
-        zeros_arr_him_her[0][2][447] = -10.0
-        pickle.dump(zeros_arr_him_her, open('layer_2_position_447_neg_10.p', 'wb'))
-
-
-
-
-
-        arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
-        arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
-
-        for j in range(arr_his_hers_reshaped.shape[0]):           
-            plt.plot(arr_his_hers_reshaped[j], label=f'array {j}' )
-        #plt.show()
-
-        for i in range(12):
-            resid_his = pickle.load(open(f'resid_his_{i}.p', 'rb')).detach().numpy()
-            resid_hers = pickle.load(open(f'resid_hers_{i}.p', 'rb')).detach().numpy()
-            resid_him = pickle.load(open(f'resid_him_{i}.p', 'rb')).detach().numpy()
-            resid_her = pickle.load(open(f'resid_her_{i}.p', 'rb')).detach().numpy()        
-
-            arr_his_hers = resid_his - resid_hers
-            arr_him_her = resid_him - resid_her
-
-            # indexes andrea thinks are important:
-            indexes_of_interest_andrea = [447, 481, 373, 459, 546, 558, 737, 200, 366, 726, ]
-            andrea_small_update_array = np.reshape(np.zeros(arr_him_her.shape),
-                                                   (1, arr_him_her.shape[1], arr_him_her.shape[2]))
-
-            for j in indexes_of_interest_andrea:
-                for k in range(9):
-                    andrea_small_update_array[0][k][j] = arr_him_her[0][k][j] * 100
-
-            print("=====Printing Andrea Small Update Array")
-            print(andrea_small_update_array)
-            pickle.dump(andrea_small_update_array, open(f'andrea_small_update_{i}.p', 'wb'))
-
-            # print(arr.shape)
-
-            # Reshape the array to (9, 768) for ease of plotting
-            print(zeros_arr_him_her.shape)
-
-            arr_his_hers_reshaped = arr_his_hers.reshape(arr_his_hers.shape[1:])
-            arr_him_her_reshaped = arr_him_her.reshape(arr_him_her.shape[1:])
-            zeros_arr_him_her_reshaped = zeros_arr_him_her.reshape(zeros_arr_him_her.shape[1:])
-
-            plt.figure(figsize=(10, 6))
-
-            # Loop over each of the 9 arrays
-            for j in range(arr_his_hers_reshaped.shape[0]):                
-                # Plot the i-th array
-                if j != 1:
-                # if True:
-                    plt.plot(np.multiply(arr_his_hers_reshaped[j], arr_him_her_reshaped[j]), label=f'product array {j}')
-
-            # for j in range(arr_him_her_reshaped.shape[0]):
-            #     if j == 3:
-            #     # if True:
-            #         plt.plot(arr_him_her_reshaped[j], label=f'Array him/her {j}')
-            
-
-            plt.title(f'Plot of {i}')
-            plt.xlabel('Index')
-            plt.ylabel('Value')
-            plt.legend() # Show legend to identify arrays
-            #plt.show()
-
-            sleep(0.5)
-
-            # 373, 447
-
-            for j in range(arr_his_hers_reshaped.shape[0]):                
-                # Plot the i-th array
-                if j != 1:
-                # if True:
-                    # plt.plot(np.multiply(arr_his_hers_reshaped[j], arr_him_her_reshaped[j]), label=f'product array {j}')
-                    plt.plot(arr_him_her_reshaped[j], label=f'Array him/her {j}')
-
-            # for j in range(arr_him_her_reshaped.shape[0]):
-            #     if j == 3:
-            #     # if True:
-            #         plt.plot(arr_him_her_reshaped[j], label=f'Array him/her {j}')
-            
-
-            plt.title(f'Plot of {i}')
-            plt.xlabel('Index')
-            plt.ylabel('Value')
-            plt.legend() # Show legend to identify arrays
-            #plt.show()
-
-            for j in range(zeros_arr_him_her_reshaped.shape[0]):                
-                # Plot the i-th array
-                if j != 1:
-                # if True:
-                    # plt.plot(np.multiply(arr_his_hers_reshaped[j], arr_him_her_reshaped[j]), label=f'product array {j}')
-                    plt.plot(zeros_arr_him_her_reshaped[j], label=f'zeros Array him/her {j}')
-
-            # for j in range(arr_him_her_reshaped.shape[0]):
-            #     if j == 3:
-            #     # if True:
-            #         plt.plot(arr_him_her_reshaped[j], label=f'Array him/her {j}')
-            
-            sleep(0.5)
-
-            plt.title(f'Plot of {i}')
-            plt.xlabel('Index')
-            plt.ylabel('Value')
-            plt.legend() # Show legend to identify arrays
-            #plt.show()
-
-            sleep(0.5)
-
-        raise Exception()
-
-    # print(get_output(resid_zeros))
-    # raise Exception()
 
     def print_top_n_last_token_from_logits(my_logits,n, compare_on_these_token_indices):
         # Get the logits for the last predicted token
@@ -889,61 +787,176 @@ if True:
                 print(f' Token {name}: {old_prob-new_prob} (from {old_prob} to {new_prob})')
 
 
-    print("=====Andrea Code ========")
-    test_tokens_her = cuda(reference_gpt2.to_tokens(test_string_her))
-    layer_intervention_pairs_run_all(
-        test_tokens_her,
-        [(i, f'andrea_small_update_{i}.p') for i in range(12)],
-        [606, 607, 683],
-    )
-
-    raise Exception("Andrea Code Halt")
-
-    for i in tqdm.tqdm(range(5)):
-        # test_tokens_him = cuda(reference_gpt2.to_tokens(test_string_his))
-        # print(reference_gpt2.to_str_tokens(test_tokens_him))
-
-        # demo_logits = demo_gpt2(test_tokens_him, save_with_prefix='his')
+    if False:
+        print("=====Andrea Code ========")
         test_tokens_her = cuda(reference_gpt2.to_tokens(test_string_her))
-        print(reference_gpt2.to_str_tokens(test_tokens_her))
+        layer_intervention_pairs_run_all(
+            test_tokens_her,
+            [(i, f'andrea_small_update_{i}.p') for i in range(12)],
+            [606, 607, 683],
+        )
 
-        # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer='start',
-        #                         resid_intervention_filename='resid_him_minus_her_start.p')
-        # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer='start',
-        #                         resid_intervention_filename='resid_him_minus_her_start_half.p')        
-        # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=None,
-        #                         resid_intervention_filename=None)
-        demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=1,
-                        resid_intervention_filename='layer_2_position_447_neg_10.p')
+        raise Exception("Andrea Code Halt")
 
-        # Get the logits for the last predicted token
-        last_logits = demo_logits[-1, -1]
-        # Apply softmax to convert the logits to probabilities
-        probabilities = torch.nn.functional.softmax(last_logits, dim=0).detach().numpy()
+    import tiktoken
+    import html
+    import random
+    from IPython.core.display import display, HTML
+    def render_toks_w_weights(toks, weights):
+        if isinstance(weights, torch.Tensor):
+            weights = weights.cpu().detach()
+        else:
+            weights = torch.tensor(weights)
+        if isinstance(toks, torch.Tensor):
+            toks = decode(toks)
+        highlighted_text = []
+        print(weights)
+        for weight, tok in zip(weights.tolist(), toks):
+            if weight > 0.0:
+                highlighted_text.append(f'<span style="background-color:rgba(135,206,250,{min(1.3*weight, 1)});border: 0.3px solid black;padding: 0.3px">{tok}</span>')
+            else:
+                highlighted_text.append(f'<span style="background-color:rgba(135,206,250,{min(-1.3*weight, 1)});border: 0.3px solid black;padding: 0.3px">{tok}</span>')
+        highlighted_text = ''.join(highlighted_text)
+        display(HTML(highlighted_text))
+        print(highlighted_text)
+        print(HTML(highlighted_text))
+        return highlighted_text + "<br>"
+
+    president_activations = torch.zeros((12, 3072))
+    doctored_activations = torch.zeros((12, 3072))
+    html_string = ''
+
+    for test_string in prompts:
+        for i in tqdm.tqdm(range(1)):
+
+
+            doctored_test_string = test_string.replace('President', random.choice(random_other_nouns))
+            print(test_string)
+
+            # test_tokens_him = cuda(reference_gpt2.to_tokens(test_string_his))
+            # print(reference_gpt2.to_str_tokens(test_tokens_him))
+
+            # demo_logits = demo_gpt2(test_tokens_him, save_with_prefix='his')
+            # zeros_arr_him_her[0][2][447] = -10.0
+            # pickle.dump(zeros_arr_him_her, open('layer_2_position_447_neg_10.p', 'wb'))
+            # pickle.dump(zeros_arr, open('zeros.p', 'wb'))
+
+            import tiktoken
+            test_tokens = cuda(reference_gpt2.to_tokens(test_string))
+            doctored_test_tokens = cuda(reference_gpt2.to_tokens(doctored_test_string))
+
+            enc = tiktoken.get_encoding('r50k_base')
+
+
+
+            print(reference_gpt2.to_string(doctored_test_tokens))
+
+            # print(test_tokens_her.shape)
+            # test_tokens_king = cuda(reference_gpt2.to_tokens(test_string_king))
+            # print(reference_gpt2.to_str_tokens(test_tokens_her))
+
+            # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer='start',
+            #                         resid_intervention_filename='resid_him_minus_her_start.p')
+            # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer='start',
+            #                         resid_intervention_filename='resid_him_minus_her_start_half.p')        
+            # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=None,
+            #                         resid_intervention_filename=None)
+            # demo_logits = demo_gpt2(test_tokens_her, intervene_in_resid_at_layer=1,
+            #                 resid_intervention_filename='layer_2_position_447_neg_10.p')
+            demo_logits, demo_other_stuff = reference_gpt2.run_with_cache(test_tokens)
+            doctored_logits, doctored_other_stuff = reference_gpt2.run_with_cache(doctored_test_tokens)
+
+            COMEY_INDEX = 12388
+
+            # print(demo_other_stuff)
+            # print(demo_other_stuff['blocks.11.mlp.hook_post'].shape)
+
+            # print([(k, enc.decode([j])) for k, j in enumerate(test_tokens)])
+
+            # print(reference_gpt2.to_string(test_tokens))
+            # print([demo_other_stuff[f'blocks.11.mlp.hook_post'][0,j,2498] for j in range(len(test_tokens))])
+            # plt.plot([demo_other_stuff[f'blocks.11.mlp.hook_post'][0,j,2498] for j in range(len(test_tokens))])
+            # plt.show()
+            print(demo_other_stuff[f'blocks.11.mlp.hook_post'].shape)
+            print(demo_other_stuff[f'blocks.11.mlp.hook_post'][0,:,2498])
+            print([(token, weight) for (token, weight) in zip(reference_gpt2.to_str_tokens(test_string), 
+                                                              demo_other_stuff[f'blocks.11.mlp.hook_post'][0,:,2498])])
+
+            html_string += str(render_toks_w_weights(reference_gpt2.to_str_tokens(test_string), demo_other_stuff[f'blocks.11.mlp.hook_post'][0,:,2498]))
+            html_string += str(render_toks_w_weights(reference_gpt2.to_str_tokens(doctored_test_string), doctored_other_stuff[f'blocks.11.mlp.hook_post'][0,:,2498]))
+
+            for j in range(12):
+                president_activations[j] += demo_other_stuff[f'blocks.{j}.mlp.hook_post'][0,-1,:]
+                doctored_activations[j] += doctored_other_stuff[f'blocks.{j}.mlp.hook_post'][0,-1,:]
+
+            # print(demo_logits.shape)
+
+            demo_comey_logit = demo_logits[0,-1,COMEY_INDEX]
+            doctored_comey_logit = doctored_logits[0,-1,COMEY_INDEX]
+
+            # print(demo_comey_logit - doctored_comey_logit)
+
+            # Get the logits for the last predicted token
+            last_logits = demo_logits[-1, -1]
+            doctored_last_logits = doctored_logits[-1, -1]
+
+
+            # print(last_logits[COMEY_INDEX] - doctored_last_logits[COMEY_INDEX])
+            # Apply softmax to convert the logits to probabilities
+            probabilities = torch.nn.functional.softmax(last_logits, dim=0).detach().numpy()
+            doctored_probabilities = torch.nn.functional.softmax(doctored_last_logits, dim=0).detach().numpy()
+
+            print(probabilities[COMEY_INDEX], doctored_probabilities[COMEY_INDEX])
+
+            # Get the indices of the top 10 probabilities
+            topk_indices = np.argpartition(probabilities, -10)[-10:]
+            # Get the top 10 probabilities
+            topk_probabilities = probabilities[topk_indices]
+            # Get the top 10 tokens
+            topk_tokens = [reference_gpt2.tokenizer.decode(i) for i in topk_indices]
+
+            # Print the top 10 tokens and their probabilities
+            # for token, probability in zip(topk_tokens, topk_probabilities):
+            #     print(f"Token: {token}, Probability: {probability}")
+
+            # Get the most probable next token and append it to the test string
+            most_probable_next_token = reference_gpt2.tokenizer.decode(last_logits.argmax())
+            # print(probabilities[683])
+            # print(probabilities[12388])
+            # for token, probability in zip(topk_tokens, topk_probabilities):
+            #     print(f"Token: {token}, Probability: {probability}")
+
+
+                # raise Exception()
+
+            test_string += most_probable_next_token
+
+            # print(test_string)
+            # if i == 0:
+            #     test_string += ' Tam'
+            # else:
+            #     test_string += most_probable_next_token
+
+    print(html_string)
+
+    diff_activations = president_activations - doctored_activations
+    flattened_activations = diff_activations.flatten()
+
+    for j in range(12):
+        plt.plot(diff_activations[j], label=f"Activation {j}")
+
+    plt.legend()
+    plt.show()
+
+    # Getting the top 10 activations overall
+    top_activations_indices = np.argpartition(flattened_activations, -10)[-10:]
+    top_activations_values = flattened_activations[top_activations_indices]
+
+    # Printing the top 10 activations
+    for i in range(10):
+        layer_index, within_layer_index = np.unravel_index(top_activations_indices[i], diff_activations.shape)
+        print(f"Top activation {i+1} is in layer {layer_index+1} at index {within_layer_index} with a value of {top_activations_values[i]}")
         
-        # Get the indices of the top 10 probabilities
-        topk_indices = np.argpartition(probabilities, -10)[-10:]
-        # Get the top 10 probabilities
-        topk_probabilities = probabilities[topk_indices]
-        # Get the top 10 tokens
-        topk_tokens = [reference_gpt2.tokenizer.decode(i) for i in topk_indices]
-
-        # Print the top 10 tokens and their probabilities
-        for token, probability in zip(topk_tokens, topk_probabilities):
-            print(f"Token: {token}, Probability: {probability}")
-
-        # Get the most probable next token and append it to the test string
-        most_probable_next_token = reference_gpt2.tokenizer.decode(last_logits.argmax())
-
-        raise Exception()
-
-        test_string_her += most_probable_next_token
-
-        # if i == 0:
-        #     test_string += ' Tam'
-        # else:
-        #     test_string += most_probable_next_token
-
     # for i in tqdm.tqdm(range(5)):
     #     test_tokens = cuda(reference_gpt2.to_tokens(test_string))
     #     print(reference_gpt2.to_str_tokens(test_tokens))
@@ -969,7 +982,7 @@ if True:
     #     # test_string += reference_gpt2.tokenizer.decode(demo_logits[-1, -1].argmin())
     #     # test_string += reference_gpt2.tokenizer.decode(argmin_excluding_weird_tokens(demo_logits[-1, -1]))
 
-    print(test_string)
+    # print(test_string)
     raise Exception()
     
 
@@ -1068,8 +1081,13 @@ from sklearn.cluster import KMeans
 from sklearn.cluster import MiniBatchKMeans
 import IPython
 from collections import defaultdict
+import tiktoken
+
+IPython.embed()
 
 matrix = demo_gpt2.embed.W_E.detach().numpy()
+
+# enc = tiktoken.encode('he')
 
 # for row in matrix[:30]:
 plt.plot(matrix[0])
