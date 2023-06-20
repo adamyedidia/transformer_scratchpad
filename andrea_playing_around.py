@@ -1,4 +1,4 @@
-from example_sentences import EXAMPLE_SENTENCES
+from example_sentences import EXAMPLE_SENTENCES, EXAMPLE_QUESTIONS
 
 IN_COLAB = False
 M1_MAC = True
@@ -680,25 +680,65 @@ def get_random_period_sentence_and_indexes():
     return sentence, test_tokens_in, [len(test_tokens_in[0])-1,], middle_indicies
 
 
-def compare_internal_vs_external_periods(filename, num_trials):
+ALL_SENTENCES = EXAMPLE_SENTENCES + EXAMPLE_QUESTIONS
+
+
+def get_random_period_or_question_sentence_and_indexes():
+    sentence = random.choice(ALL_SENTENCES)
+    test_tokens_in = cuda(reference_gpt2.to_tokens(sentence))
+    middle_indicies = [
+        ind for ind, ele in enumerate(test_tokens_in[0])
+        if ele.item() == 13 and ind != len(test_tokens_in[0])-1
+    ]
+    return sentence, test_tokens_in, [len(test_tokens_in[0])-1,], middle_indicies
+
+
+def get_all_period_or_question_marks_sentence_and_indexes(sentences):
+    test_tokens_in = cuda(reference_gpt2.to_tokens(sentences))
+    middle_indicies = [
+        ind for ind, ele in enumerate(test_tokens_in[0])
+        if ele.item() in [13, 30]
+    ]
+    return sentences, test_tokens_in, middle_indicies
+
+
+def get_random_period_or_question_sentences_and_indexes(n):
+    sentences = [random.choice(ALL_SENTENCES) for _ in range(n)]
+    solve_up = [
+        get_all_period_or_question_marks_sentence_and_indexes(' '.join(sentences[:i]))
+        for i in range(1, n+1)
+    ]
+    final_sentences, final_test_tokens_in, final_middle_indicies = solve_up[-1]
+    end_indicies = [middle_indicies[-1] for sentences, test_tokens_in, middle_indicies in solve_up]
+    middle_indicies = [i for i in final_middle_indicies if i not in end_indicies]
+    assert len(end_indicies) == n
+    assert sum([not(final_test_tokens_in[0][i].item() in [13, 30]) for i in end_indicies+middle_indicies]) == 0
+    return final_sentences, final_test_tokens_in, end_indicies, middle_indicies
+
+
+def compare_internal_vs_external_periods(filename, num_trials, n):
     for i in range(8, 12):
         pickle.dump([], open(f'periods_end_{filename}_{i}.p', 'wb'))
         pickle.dump([], open(f'periods_middle_{filename}_{i}.p', 'wb'))
 
     for _ in tqdm.tqdm(range(num_trials)):
-        sentence, test_tokens_in, end_indexes, middle_indexes = get_random_period_sentence_and_indexes()
+        sentence, test_tokens_in, end_indexes, middle_indexes = get_random_period_or_question_sentences_and_indexes(n)
         #'filename', 'end_indexes' , 'middle_indexes')
         info = SaveTokensAtPeriodInfo(filename=filename, end_indexes=end_indexes, middle_indexes=middle_indexes)
         demo_gpt2(test_tokens_in, save_tokens_at_index=info)
 
-    ends = pickle.load(open(f'periods_end_{filename}_{11}.p', 'rb'))
-    middles = pickle.load(open(f'periods_middle_{filename}_{11}.p', 'rb'))
-    return ends, middles
+
+def run_and_learn_external_periods(filename, num_trials, n):
+    compare_internal_vs_external_periods(filename, num_trials, n)
+    for i in tqdm.tqdm(range(9, 12)):
+        learn_you_an_svm(filename, i)
 
 
-def learn_you_an_svm(filename, num_trials):
+def learn_you_an_svm(filename, i):
     print(len(EXAMPLE_SENTENCES))
-    ends, middles = compare_internal_vs_external_periods(filename, num_trials)
+    print(len(EXAMPLE_QUESTIONS))
+    ends = pickle.load(open(f'periods_end_{filename}_{i}.p', 'rb'))
+    middles = pickle.load(open(f'periods_middle_{filename}_{i}.p', 'rb'))
     # Convert lists of tensors into 2D arrays
     set1 = np.vstack([t.detach().numpy() for t in ends])
     set2 = np.vstack([t.detach().numpy() for t in middles])
@@ -726,7 +766,22 @@ def learn_you_an_svm(filename, num_trials):
 
     # Model Accuracy: how often is the classifier correct?
     print("Accuracy:", accuracy_score(y_test, y_pred))
+    pickle.dump(clf, open(f'cls_{filename}_{i}.p', 'wb'))
     return clf
+
+
+# Run a test to see how the classifier works
+def run_a_test_against_clf_layer_i(string, file_name, i, cls_file_name):
+    clf = pickle.load(open(f'cls_{cls_file_name}_{i}.p', 'rb'))
+    run_gpt2_small_on_string(string, file_name)
+    x = pickle.load(open(f'resid_{file_name}_{i}.p'))
+    token_vecs = [t.detach().numpy() for t in x[0]]
+    set_1 = np.vstack(token_vecs)
+    predictions = clf.predict(set_1)
+    tokens_1 = [enc.decode([j]) for j in cuda(reference_gpt2.to_tokens(string))[0]]
+    return [(a, b) for a, b in zip(tokens_1, predictions)]
+
+
 
 
 
