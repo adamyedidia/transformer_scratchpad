@@ -1,3 +1,5 @@
+from example_sentences import EXAMPLE_SENTENCES
+
 IN_COLAB = False
 M1_MAC = True
 
@@ -9,6 +11,7 @@ from transformer_lens import HookedTransformer
 from transformer_lens import loading_from_pretrained as loading
 from transformer_lens.utils import gelu_new
 from dataclasses import dataclass
+from collections import namedtuple
 import torch
 import torch.nn as nn
 import numpy as np
@@ -16,6 +19,10 @@ import math
 import IPython
 import tiktoken
 import matplotlib.pyplot as plt
+import tqdm.auto as tqdm
+from sklearn import svm
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 LIST_OF_ALL_TOKENS = []
 enc = tiktoken.get_encoding('r50k_base')
@@ -382,6 +389,8 @@ class Unembed(nn.Module):
         return logits
 
 
+SaveTokensAtPeriodInfo = namedtuple('SaveTokensAtPeriodInfo',['filename', 'end_indexes', 'middle_indexes'])
+
 # rand_float_test(Unembed, [2, 4, 768])
 # load_gpt2_test(Unembed, reference_gpt2.unembed, cache["ln_final.hook_normalized"])
 
@@ -396,7 +405,7 @@ class DemoTransformer(nn.Module):
         self.unembed = Unembed(cfg)
 
     def forward(self, tokens, display=False, save_with_prefix=None, load=False, load_with_mod_vector=None,
-                intervene_in_resid_at_layer=None, resid_intervention_filename=None):
+                intervene_in_resid_at_layer=None, resid_intervention_filename=None, save_tokens_at_index=None):
         # tokens [batch, position]
 
         if load:
@@ -421,6 +430,14 @@ class DemoTransformer(nn.Module):
                 residual = (residual + torch.from_numpy(residual_intervention)).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_start.p', 'wb'))
+                pickle.dump(embed, open(f'resid_{save_with_prefix}_embed.p', 'wb'))
+                pickle.dump(pos_embed, open(f'resid_{save_with_prefix}_pos_embed.p', 'wb'))
+
+
+
+
+
+
 
         # print(residual.shape)
         for i, block in enumerate(self.blocks):
@@ -431,6 +448,19 @@ class DemoTransformer(nn.Module):
                 residual = (residual + torch.from_numpy(residual_intervention)).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_{i}.p', 'wb'))
+            if save_tokens_at_index and i > 8:
+                filename = save_tokens_at_index.filename
+                end_indexes = save_tokens_at_index.end_indexes
+                end_tokens_list = pickle.load(open(f'periods_end_{filename}_{i}.p', 'rb'))
+                for index in end_indexes:
+                    end_tokens_list.append(residual[0][index])
+                pickle.dump(end_tokens_list, open(f'periods_end_{filename}_{i}.p', 'wb'))
+
+                middle_indexes = save_tokens_at_index.middle_indexes
+                middle_tokens_list = pickle.load(open(f'periods_middle_{filename}_{i}.p', 'rb'))
+                for index in middle_indexes:
+                    middle_tokens_list.append(residual[0][index])
+                pickle.dump(middle_tokens_list, open(f'periods_middle_{filename}_{i}.p', 'wb'))
             # print(residual)
 
         normalized_resid_final = self.ln_final(residual)
@@ -504,10 +534,15 @@ def test_if_token_in_top_n_tokens(my_logits, goal_token, n):
         return True
     return False
 
-def run_gpt2_small_on_string(input_string):
+
+def run_gpt2_small_on_string(input_string, prefix):
     test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
-    demo_logits_def = demo_gpt2(test_tokens_in)
-    default_token_probs = print_top_n_last_token_from_logits(demo_logits_def, 5, [])
+    # is enc.encode('?.!') [30, 13, 0]
+    end_of_sentence_tokens = [30, 13, 0]
+    end_of_sentence_indicies = [ind for ind, ele in enumerate(test_tokens_in[0]) if ele.item() in end_of_sentence_tokens]
+    demo_logits_def = demo_gpt2(test_tokens_in, save_with_prefix=prefix)
+    return end_of_sentence_indicies
+
 
 def check_if_gpt2_gets_right_answer(input_string, correct_next_token):
     test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
@@ -533,12 +568,167 @@ def get_repeating_token_pattern(cycle_length, total_length):
         'string': ''.join([complete_cycles, incomplete_cycle])
     }
 
+
 def get_repeating_token_pattern_and_run_gpt2_small(cycle_length, total_length):
     helper_dict = get_repeating_token_pattern(cycle_length, total_length)
     goal_token = helper_dict['next_element']
     print(f'Goal Token:'+goal_token)
     success = check_if_gpt2_gets_right_answer(helper_dict['string'], goal_token)
     print(success)
+
+
+def get_angle_between_vectors(a, b):
+    dot_product = np.dot(a, b)
+    norms = np.linalg.norm(a) * np.linalg.norm(b)
+    if norms == 0:
+        return None
+    return np.arccos(np.clip(dot_product/norms, -1.0, 1.0))
+
+
+def get_angle_between_one_d_tensors(a, b):
+    a_vec = a.detach().numpy()
+    b_vec = b.detach().numpy()
+    return get_angle_between_vectors(a_vec, b_vec)
+
+
+def get_n_random_sentences(n):
+    sentences = pickle.load(open('sentences.p', 'rb'))['sentences']
+    random_sentence_list = [random.choice(sentences)['sentence'] for _ in range(n)]
+    string = " ".join(random_sentence_list)
+    return string
+
+
+def run_gpt_on_n_random_sentences(n, prefix):
+    string = get_n_random_sentences(n)
+    indicies = run_gpt2_small_on_string(string, prefix)
+    return indicies, string
+
+
+def run_gpt_on_string(string, prefix):
+    indicies = run_gpt2_small_on_string(string, prefix)
+    return indicies, string
+
+
+def get_residual_streams_with_prefix(prefix):
+    resids = {
+        i: pickle.load(open(f'resid_{prefix}_{i}.p', 'rb'))
+        for i in range(12)
+    }
+    resids['start'] = pickle.load(open(f'resid_{prefix}_start.p', 'rb'))
+    return resids
+
+
+def get_angles_from_a_given_index(residual_stream, index):
+    print(residual_stream.shape)
+    angle_index = [
+        (get_angle_between_one_d_tensors(residual_stream[0][index], residual_stream[0][i]),i )
+        for i in range(len(residual_stream[0]))
+    ]
+    angle_index.sort()
+    return angle_index
+
+
+def given_index_get_sorted_angles(residual_streams, index):
+    return [
+        get_angles_from_a_given_index(residual_stream, index)
+        for residual_stream in residual_streams.values()
+    ]
+
+
+def given_index_what_bucket(bucket_ends, index):
+    for i in range(len(bucket_ends)):
+        if index <= bucket_ends[i]:
+            return i
+    return len(bucket_ends)
+
+
+def given_string_end_locations_get_average_vec(residual_streams, sentence_ends):
+    number_of_tokens = sentence_ends[-1]+1
+    angle_dict = {}
+    num_sentences = len(sentence_ends)
+    sums = np.zeros((num_sentences, num_sentences))
+    counts = np.zeros((num_sentences, num_sentences))
+    for key, resid_stream in residual_streams.items():
+        angles = np.empty((number_of_tokens, number_of_tokens))
+        for i in range(number_of_tokens):
+            for j in range(number_of_tokens):
+                angles[i][j] = get_angle_between_one_d_tensors(resid_stream[0][i], resid_stream[0][j])
+
+                if i != j:
+                    bucket_i = given_index_what_bucket(sentence_ends, i)
+                    bucket_j = given_index_what_bucket(sentence_ends, j)
+                    sums[bucket_i][bucket_j] += angles[i][j]
+                    counts[bucket_i][bucket_j] += 1
+        angle_dict[key] = angles
+    return angle_dict, sums, counts
+
+
+# a bullshit function to do what I want
+def do_the_thing(n):
+    indicies, string = run_gpt_on_n_random_sentences(n)
+    residual_dict = get_residual_streams_with_prefix('andrea_messing_around')
+    print([residual_dict[11][0][i] - residual_dict[0][0][i] for i in indicies])
+
+
+def get_random_period_sentence_and_indexes():
+    sentence = random.choice(EXAMPLE_SENTENCES)
+    test_tokens_in = cuda(reference_gpt2.to_tokens(sentence))
+    middle_indicies = [
+        ind for ind, ele in enumerate(test_tokens_in[0])
+        if ele.item() == 13 and ind != len(test_tokens_in[0])-1
+    ]
+    return sentence, test_tokens_in, [len(test_tokens_in[0])-1,], middle_indicies
+
+
+def compare_internal_vs_external_periods(filename, num_trials):
+    for i in range(8, 12):
+        pickle.dump([], open(f'periods_end_{filename}_{i}.p', 'wb'))
+        pickle.dump([], open(f'periods_middle_{filename}_{i}.p', 'wb'))
+
+    for _ in tqdm.tqdm(range(num_trials)):
+        sentence, test_tokens_in, end_indexes, middle_indexes = get_random_period_sentence_and_indexes()
+        #'filename', 'end_indexes' , 'middle_indexes')
+        info = SaveTokensAtPeriodInfo(filename=filename, end_indexes=end_indexes, middle_indexes=middle_indexes)
+        demo_gpt2(test_tokens_in, save_tokens_at_index=info)
+
+    ends = pickle.load(open(f'periods_end_{filename}_{11}.p', 'rb'))
+    middles = pickle.load(open(f'periods_middle_{filename}_{11}.p', 'rb'))
+    return ends, middles
+
+
+def learn_you_an_svm(filename, num_trials):
+    print(len(EXAMPLE_SENTENCES))
+    ends, middles = compare_internal_vs_external_periods(filename, num_trials)
+    # Convert lists of tensors into 2D arrays
+    set1 = np.vstack([t.detach().numpy() for t in ends])
+    set2 = np.vstack([t.detach().numpy() for t in middles])
+
+    # Combine the sets into one array for training data
+    X = np.vstack((set1, set2))
+
+    # Create labels for the sets. We'll use 0 for set1 and 1 for set2.
+    y = np.array([0] * len(set1) + [1] * len(set2))
+    print(y)
+
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Create a SVM Classifier
+    clf = svm.SVC(kernel='linear')  # Linear Kernel
+
+    # Train the model using the training sets
+    clf.fit(X_train, y_train)
+
+    # Predict the response for test dataset
+    y_pred = clf.predict(X_test)
+    print(y_pred)
+    print(y_test)
+
+    # Model Accuracy: how often is the classifier correct?
+    print("Accuracy:", accuracy_score(y_test, y_pred))
+    return clf
+
+
 
 
 IPython.embed()
