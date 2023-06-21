@@ -1,3 +1,7 @@
+from example_sentences import EXAMPLE_SENTENCES, EXAMPLE_QUESTIONS, EXAMPLE_MIX, SEMICOLON_EXAMPLE_SENTENCES, \
+    EXAMPLE_SUBJECT_BREAKDOWNS, EXAMPLE_SUBJECT_BREAKDOWNS_KEYS, EXAMPLE_SUBJECT_VERB_BREAKDOWNS_KEYS, \
+    EXAMPLE_SUBJECT_VERB_BREAKDOWNS
+
 IN_COLAB = False
 M1_MAC = True
 
@@ -9,6 +13,7 @@ from transformer_lens import HookedTransformer
 from transformer_lens import loading_from_pretrained as loading
 from transformer_lens.utils import gelu_new
 from dataclasses import dataclass
+from collections import namedtuple
 import torch
 import torch.nn as nn
 import numpy as np
@@ -16,6 +21,10 @@ import math
 import IPython
 import tiktoken
 import matplotlib.pyplot as plt
+import tqdm.auto as tqdm
+from sklearn import svm
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 LIST_OF_ALL_TOKENS = []
 enc = tiktoken.get_encoding('r50k_base')
@@ -382,6 +391,8 @@ class Unembed(nn.Module):
         return logits
 
 
+SaveTokensAtPeriodInfo = namedtuple('SaveTokensAtPeriodInfo',['filename', 'end_indexes', 'middle_indexes'])
+
 # rand_float_test(Unembed, [2, 4, 768])
 # load_gpt2_test(Unembed, reference_gpt2.unembed, cache["ln_final.hook_normalized"])
 
@@ -396,7 +407,8 @@ class DemoTransformer(nn.Module):
         self.unembed = Unembed(cfg)
 
     def forward(self, tokens, display=False, save_with_prefix=None, load=False, load_with_mod_vector=None,
-                intervene_in_resid_at_layer=None, resid_intervention_filename=None):
+                intervene_in_resid_at_layer=None, resid_intervention_filename=None, save_tokens_at_index=None,
+                split_tokens_by_lists=None, split_tokens_by_lists_filename=None):
         # tokens [batch, position]
 
         if load:
@@ -421,6 +433,14 @@ class DemoTransformer(nn.Module):
                 residual = (residual + torch.from_numpy(residual_intervention)).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_start.p', 'wb'))
+                pickle.dump(embed, open(f'resid_{save_with_prefix}_embed.p', 'wb'))
+                pickle.dump(pos_embed, open(f'resid_{save_with_prefix}_pos_embed.p', 'wb'))
+
+
+
+
+
+
 
         # print(residual.shape)
         for i, block in enumerate(self.blocks):
@@ -431,8 +451,29 @@ class DemoTransformer(nn.Module):
                 residual = (residual + torch.from_numpy(residual_intervention)).float()
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_{i}.p', 'wb'))
-            # print(residual)
+            if save_tokens_at_index:
+                filename = save_tokens_at_index.filename
+                end_indexes = save_tokens_at_index.end_indexes
+                end_tokens_list = pickle.load(open(f'ends_{filename}_{i}.p', 'rb'))
+                for index in end_indexes:
+                    end_tokens_list.append(residual[0][index])
+                    # print(f'len end ={len(end_tokens_list)}')
+                pickle.dump(end_tokens_list, open(f'ends_{filename}_{i}.p', 'wb'))
 
+                middle_indexes = save_tokens_at_index.middle_indexes
+                middle_tokens_list = pickle.load(open(f'middles_{filename}_{i}.p', 'rb'))
+                for index in middle_indexes:
+                    middle_tokens_list.append(residual[0][index])
+                    # print(f'len middle ={len(middle_tokens_list)}')
+                pickle.dump(middle_tokens_list, open(f'middles_{filename}_{i}.p', 'wb'))
+            # print(residual)
+            if split_tokens_by_lists and split_tokens_by_lists_filename:
+                my_filename = split_tokens_by_lists_filename
+                for key, index_list in split_tokens_by_lists.items():
+                    current_token_list = pickle.load(open(f'{my_filename}_{key}_{i}.p', 'rb'))
+                    for index in index_list:
+                        current_token_list.append(residual[0][index])
+                    pickle.dump(current_token_list, open(f'{my_filename}_{key}_{i}.p', 'wb'))
         normalized_resid_final = self.ln_final(residual)
 
         # visualize_tensor(residual)
@@ -504,10 +545,15 @@ def test_if_token_in_top_n_tokens(my_logits, goal_token, n):
         return True
     return False
 
-def run_gpt2_small_on_string(input_string):
+
+def run_gpt2_small_on_string(input_string, prefix):
     test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
-    demo_logits_def = demo_gpt2(test_tokens_in)
-    default_token_probs = print_top_n_last_token_from_logits(demo_logits_def, 5, [])
+    # is enc.encode('?.!') [30, 13, 0]
+    end_of_sentence_tokens = [30, 13, 0]
+    end_of_sentence_indicies = [ind for ind, ele in enumerate(test_tokens_in[0]) if ele.item() in end_of_sentence_tokens]
+    demo_logits_def = demo_gpt2(test_tokens_in, save_with_prefix=prefix)
+    return end_of_sentence_indicies
+
 
 def check_if_gpt2_gets_right_answer(input_string, correct_next_token):
     test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
@@ -533,12 +579,436 @@ def get_repeating_token_pattern(cycle_length, total_length):
         'string': ''.join([complete_cycles, incomplete_cycle])
     }
 
+
 def get_repeating_token_pattern_and_run_gpt2_small(cycle_length, total_length):
     helper_dict = get_repeating_token_pattern(cycle_length, total_length)
     goal_token = helper_dict['next_element']
     print(f'Goal Token:'+goal_token)
     success = check_if_gpt2_gets_right_answer(helper_dict['string'], goal_token)
     print(success)
+
+
+def get_angle_between_vectors(a, b):
+    dot_product = np.dot(a, b)
+    norms = np.linalg.norm(a) * np.linalg.norm(b)
+    if norms == 0:
+        return None
+    return np.arccos(np.clip(dot_product/norms, -1.0, 1.0))
+
+
+def get_angle_between_one_d_tensors(a, b):
+    a_vec = a.detach().numpy()
+    b_vec = b.detach().numpy()
+    return get_angle_between_vectors(a_vec, b_vec)
+
+
+def get_n_random_sentences(n):
+    sentences = pickle.load(open('sentences.p', 'rb'))['sentences']
+    random_sentence_list = [random.choice(sentences)['sentence'] for _ in range(n)]
+    string = " ".join(random_sentence_list)
+    return string
+
+
+def run_gpt_on_n_random_sentences(n, prefix):
+    string = get_n_random_sentences(n)
+    indicies = run_gpt2_small_on_string(string, prefix)
+    return indicies, string
+
+
+def run_gpt_on_string(string, prefix):
+    indicies = run_gpt2_small_on_string(string, prefix)
+    return indicies, string
+
+
+def get_residual_streams_with_prefix(prefix):
+    resids = {
+        i: pickle.load(open(f'resid_{prefix}_{i}.p', 'rb'))
+        for i in range(12)
+    }
+    resids['start'] = pickle.load(open(f'resid_{prefix}_start.p', 'rb'))
+    return resids
+
+
+def get_angles_from_a_given_index(residual_stream, index):
+    print(residual_stream.shape)
+    angle_index = [
+        (get_angle_between_one_d_tensors(residual_stream[0][index], residual_stream[0][i]),i )
+        for i in range(len(residual_stream[0]))
+    ]
+    angle_index.sort()
+    return angle_index
+
+
+def given_index_get_sorted_angles(residual_streams, index):
+    return [
+        get_angles_from_a_given_index(residual_stream, index)
+        for residual_stream in residual_streams.values()
+    ]
+
+
+def given_index_what_bucket(bucket_ends, index):
+    for i in range(len(bucket_ends)):
+        if index <= bucket_ends[i]:
+            return i
+    return len(bucket_ends)
+
+
+def given_string_end_locations_get_average_vec(residual_streams, sentence_ends):
+    number_of_tokens = sentence_ends[-1]+1
+    angle_dict = {}
+    num_sentences = len(sentence_ends)
+    sums = np.zeros((num_sentences, num_sentences))
+    counts = np.zeros((num_sentences, num_sentences))
+    for key, resid_stream in residual_streams.items():
+        angles = np.empty((number_of_tokens, number_of_tokens))
+        for i in range(number_of_tokens):
+            for j in range(number_of_tokens):
+                angles[i][j] = get_angle_between_one_d_tensors(resid_stream[0][i], resid_stream[0][j])
+
+                if i != j:
+                    bucket_i = given_index_what_bucket(sentence_ends, i)
+                    bucket_j = given_index_what_bucket(sentence_ends, j)
+                    sums[bucket_i][bucket_j] += angles[i][j]
+                    counts[bucket_i][bucket_j] += 1
+        angle_dict[key] = angles
+    return angle_dict, sums, counts
+
+
+# a bullshit function to do what I want
+def do_the_thing(n):
+    indicies, string = run_gpt_on_n_random_sentences(n)
+    residual_dict = get_residual_streams_with_prefix('andrea_messing_around')
+    print([residual_dict[11][0][i] - residual_dict[0][0][i] for i in indicies])
+
+
+def get_random_period_sentence_and_indexes():
+    sentence = random.choice(EXAMPLE_SENTENCES)
+    test_tokens_in = cuda(reference_gpt2.to_tokens(sentence))
+    middle_indicies = [
+        ind for ind, ele in enumerate(test_tokens_in[0])
+        if ele.item() == 13 and ind != len(test_tokens_in[0])-1
+    ]
+    return sentence, test_tokens_in, [len(test_tokens_in[0])-1,], middle_indicies
+
+
+ALL_SENTENCES = EXAMPLE_SENTENCES + EXAMPLE_QUESTIONS
+
+
+def get_random_period_or_question_sentence_and_indexes():
+    sentence = random.choice(ALL_SENTENCES)
+    test_tokens_in = cuda(reference_gpt2.to_tokens(sentence))
+    middle_indicies = [
+        ind for ind, ele in enumerate(test_tokens_in[0])
+        if ele.item() == 13 and ind != len(test_tokens_in[0])-1
+    ]
+    return sentence, test_tokens_in, [len(test_tokens_in[0])-1,], middle_indicies
+
+
+def get_all_period_or_question_marks_sentence_and_indexes(sentences):
+    test_tokens_in = cuda(reference_gpt2.to_tokens(sentences))
+    middle_indicies = [
+        ind for ind, ele in enumerate(test_tokens_in[0])
+        if ele.item() in [30, 13, 0]
+    ]
+    return sentences, test_tokens_in, middle_indicies
+
+
+def get_random_period_or_question_sentences_and_indexes(n):
+    sentences = [random.choice(ALL_SENTENCES) for _ in range(n)]
+    solve_up = [
+        get_all_period_or_question_marks_sentence_and_indexes(' '.join(sentences[:i]))
+        for i in range(1, n+1)
+    ]
+    final_sentences, final_test_tokens_in, final_middle_indicies = solve_up[-1]
+    end_indicies = [len(test_tokens_in[0])-1 for sentences, test_tokens_in, middle_indicies in solve_up]
+    middle_indicies = [i for i in final_middle_indicies if i not in end_indicies]
+    assert len(end_indicies) == n
+    assert sum([not(final_test_tokens_in[0][i].item() in [30, 13, 0]) for i in end_indicies+middle_indicies]) == 0
+    return final_sentences, final_test_tokens_in, end_indicies, middle_indicies
+
+
+def get_random_sentence_all_other_indicies(n, sentence_list):
+    sentences = [random.choice(sentence_list) for _ in range(n)]
+    solve_up = [
+        get_all_period_or_question_marks_sentence_and_indexes(' '.join(sentences[:i]))
+        for i in range(1, n+1)
+    ]
+    final_sentences, final_test_tokens_in, final_middle_indicies = solve_up[-1]
+    end_indicies = [len(test_tokens_in[0])-1 for sentences, test_tokens_in, middle_indicies in solve_up]
+    middle_indicies = [j for j in range(len(final_test_tokens_in[0])) if j not in end_indicies]
+    assert len(end_indicies) == n
+    return final_sentences, final_test_tokens_in, end_indicies, middle_indicies
+
+
+def compare_internal_vs_external_periods(filename, num_trials, n, sentence_list):
+    for _ in tqdm.tqdm(range(num_trials)):
+        sentence, test_tokens_in, end_indexes, middle_indexes = get_random_sentence_all_other_indicies(
+            n, sentence_list
+        )
+        info = SaveTokensAtPeriodInfo(filename=filename, end_indexes=end_indexes, middle_indexes=middle_indexes)
+        demo_gpt2(test_tokens_in, save_tokens_at_index=info)
+
+
+def run_and_learn_end_vs_not(filename, num_trials, n):
+    for i in range(12):
+        pickle.dump([], open(f'ends_{filename}_{i}.p', 'wb'))
+        pickle.dump([], open(f'middles_{filename}_{i}.p', 'wb'))
+
+    # split numbers
+    compare_internal_vs_external_periods(
+        filename, int(num_trials*0.5), n, sentence_list=EXAMPLE_MIX
+    )
+    compare_internal_vs_external_periods(
+        filename, int(num_trials*0.3), n, sentence_list=EXAMPLE_SENTENCES
+    )
+    compare_internal_vs_external_periods(
+        filename, int(num_trials*0.2), n, sentence_list=EXAMPLE_QUESTIONS
+    )
+
+    for i in tqdm.tqdm(range(12)):
+        learn_you_an_svm(filename, i, "ends", "middles")
+
+
+def learn_you_an_svm(filename, i, zero_side, one_side):
+    print(len(EXAMPLE_SENTENCES))
+    print(len(EXAMPLE_QUESTIONS))
+    ends = pickle.load(open(f'{zero_side}_{filename}_{i}.p', 'rb'))
+    middles = pickle.load(open(f'{one_side}_{filename}_{i}.p', 'rb'))
+    # Convert lists of tensors into 2D arrays
+    set1 = np.vstack([t.detach().numpy() for t in ends])
+    set2 = np.vstack([t.detach().numpy() for t in middles])
+
+    # Combine the sets into one array for training data
+    X = np.vstack((set1, set2))
+
+    # Create labels for the sets. We'll use 0 for set1 and 1 for set2.
+    y = np.array([0] * len(set1) + [1] * len(set2))
+    print(y)
+
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Create a SVM Classifier
+    clf = svm.SVC(kernel='linear')  # Linear Kernel
+
+    # Train the model using the training sets
+    clf.fit(X_train, y_train)
+
+    # Predict the response for test dataset
+    y_pred = clf.predict(X_test)
+    print(y_pred)
+    print(y_test)
+
+    # Model Accuracy: how often is the classifier correct?
+    print("Accuracy:", accuracy_score(y_test, y_pred))
+
+    pickle.dump(clf, open(f'cls_{filename}_{i}.p', 'wb'))
+    return clf
+
+
+def test_sentences_many_lists(file_name, i, cls_file_name):
+    test_n_sentences(60, EXAMPLE_SENTENCES, file_name, i, cls_file_name)
+    test_n_sentences(20, EXAMPLE_QUESTIONS, file_name, i, cls_file_name)
+    test_n_sentences(20, EXAMPLE_MIX, file_name, i, cls_file_name)
+    test_n_sentences(5, SEMICOLON_EXAMPLE_SENTENCES, file_name, i, cls_file_name)
+
+
+def test_n_sentences(n, sen_list, file_name, i, cls_file_name):
+    for _ in range(n):
+        check_test_against_clf_layer_i(random.choice(sen_list), file_name, i, cls_file_name)
+
+
+def check_test_against_clf_layer_i(one_sentence, file_name, i, cls_file_name):
+    clf = pickle.load(open(f'cls_{cls_file_name}_{i}.p', 'rb'))
+    run_gpt2_small_on_string(one_sentence, file_name)
+    x = pickle.load(open(f'resid_{file_name}_{i}.p', 'rb'))
+    token_vecs = [t.detach().numpy() for t in x[0]]
+    set_1 = np.vstack(token_vecs)
+    predictions = clf.predict(set_1)
+    for j in range(len(predictions)):
+        if (j == len(predictions)-1 and predictions[j] == 1) or (j != len(predictions)-1 and predictions[j] == 0):
+            print('ERROR')
+            tokens_1 = [enc.decode([j]) for j in cuda(reference_gpt2.to_tokens(one_sentence))[0]]
+            print([(a, b) for a, b in zip(tokens_1, predictions)])
+
+
+# Run a test to see how the classifier works
+def run_a_test_against_clf_layer_i(string, file_name, i, cls_file_name, prediction_interpreter=None):
+    clf = pickle.load(open(f'cls_{cls_file_name}_{i}.p', 'rb'))
+    run_gpt2_small_on_string(string, file_name)
+    x = pickle.load(open(f'resid_{file_name}_{i}.p', 'rb'))
+    token_vecs = [t.detach().numpy() for t in x[0]]
+    set_1 = np.vstack(token_vecs)
+    predictions = clf.predict(set_1)
+    if prediction_interpreter:
+        predictions = [prediction_interpreter[prediction] for prediction in predictions]
+    tokens_1 = [enc.decode([j]) for j in cuda(reference_gpt2.to_tokens(string))[0]]
+    return [(a, b) for a, b in zip(tokens_1, predictions)]
+
+
+def get_random_sentence_breakdown_token_split(n, breakdowns, keys):
+
+    sentence_breakdowns = [random.choice(breakdowns) for _ in range(n)]
+    print(sentence_breakdowns)
+    token_index_lists = {
+        key: []
+        for key in keys
+    }
+
+    flattened_sentence_breakdowns = [item for sublist in sentence_breakdowns for item in sublist]
+    print(flattened_sentence_breakdowns)
+
+    old_string = ''
+    old_tokenization = cuda(reference_gpt2.to_tokens(old_string))
+
+    for breakdown_part in flattened_sentence_breakdowns:
+        new_string_fragment = \
+            breakdown_part['fragment'] \
+                if (i==0 or breakdown_part['type'] in ['end', 'end of sentence']) \
+                else " "+breakdown_part['fragment']
+        new_string = old_string + new_string_fragment
+        new_tokenization = cuda(reference_gpt2.to_tokens(new_string))
+        # print(f'new_string={new_string} | old_string={old_string}')
+        # print(f'new_tokenization={new_tokenization} | old_tokenization={old_tokenization}')
+
+        # We assume all new tokens get the label of the last part we added
+        # note that this can be bullshit "Calif." tokenizes the period as 13 and "Calif.?" tokenizes
+        # the .? together
+        new_token_indexes = list(range(len(old_tokenization[0]), len(new_tokenization[0])))
+        print(new_token_indexes)
+        new_list = token_index_lists[breakdown_part['type']] + new_token_indexes
+        print(new_list)
+        token_index_lists[breakdown_part['type']] = new_list
+
+        old_string = new_string
+        old_tokenization = new_tokenization
+
+    # so by the end we have added on all the indices of the tokenzation.
+    print(new_string)
+    print(new_tokenization)
+    print(token_index_lists)
+
+    return new_tokenization, token_index_lists
+
+
+def run_and_learn_subject_vs_end_vs_middle(filename, num_trials, n):
+    updated_filename = 'split_token_by_lists_'+filename
+    for i in range(12):
+        for name in EXAMPLE_SUBJECT_BREAKDOWNS_KEYS:
+            pickle.dump([], open(f'{updated_filename}_{name}_{i}.p', 'wb'))
+
+    # split numbers
+    for _ in tqdm.tqdm(range(num_trials)):
+        tokenization, token_index_lists = get_random_sentence_breakdown_token_split(
+            random.randint(1, n),
+            EXAMPLE_SUBJECT_BREAKDOWNS,
+            EXAMPLE_SUBJECT_BREAKDOWNS_KEYS,
+        )
+        demo_gpt2(
+            tokenization,
+            split_tokens_by_lists=token_index_lists,
+            split_tokens_by_lists_filename=updated_filename
+        )
+
+    for i in range(12):
+        learn_you_a_multi_part_svm(updated_filename, i, EXAMPLE_SUBJECT_BREAKDOWNS_KEYS)
+
+
+def run_and_learn_verb_subject_vs_end_vs_other(filename, num_trials, n):
+    upload_filename = 'andrea_verbing_'+filename
+    # create and or empty out the files
+    for i in range(12):
+        for name in EXAMPLE_SUBJECT_VERB_BREAKDOWNS_KEYS:
+            pickle.dump([], open(f'{upload_filename}_{name}_{i}.p', 'wb'))
+
+    for _ in tqdm.tqdm(range(num_trials)):
+        tokenization, token_index_lists = get_random_sentence_breakdown_token_split(
+            random.randint(1, n),
+            EXAMPLE_SUBJECT_VERB_BREAKDOWNS,
+            EXAMPLE_SUBJECT_VERB_BREAKDOWNS_KEYS,
+        )
+        demo_gpt2(
+            tokenization,
+            split_tokens_by_lists=token_index_lists,
+            split_tokens_by_lists_filename=upload_filename
+        )
+
+    for i in range(12):
+        learn_you_a_multi_part_svm(upload_filename, i, EXAMPLE_SUBJECT_VERB_BREAKDOWNS_KEYS)
+
+
+def learn_you_a_multi_part_svm(filename, i, part_names):
+    token_sets = [pickle.load(open(f'{filename}_{part_name}_{i}.p', 'rb')) for part_name in part_names]
+    # Convert lists of tensors into 2D arrays
+    numpy_sets = [np.vstack([t.detach().numpy() for t in token_set]) for token_set in token_sets]
+
+    # Combine the sets into one array for training data
+    X = np.vstack(tuple(numpy_sets))
+
+    print(f'Len X= {len(X)} on layer {i}')
+
+    # Create labels for the sets. We'll use 0 for set1 and 1 for set2.
+    y = np.array([j for j, token_set in enumerate(token_sets) for _ in token_set])
+
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Create a SVM Classifier
+    clf = svm.SVC(kernel='linear')  # Linear Kernel
+
+    # Train the model using the training sets
+    clf.fit(X_train, y_train)
+
+    # Predict the response for test dataset
+    y_pred = clf.predict(X_test)
+    print(y_pred)
+    print(y_test)
+
+    # Model Accuracy: how often is the classifier correct?
+    print("Accuracy:", accuracy_score(y_test, y_pred))
+
+    pickle.dump(clf, open(f'cls_{filename}_{i}.p', 'wb'))
+    return clf
+
+
+def demo_of_subject_end_of_sentence_other(sentence, layer):
+    test_string = "test_andrea"
+    file_name = "split_token_by_lists_test_subject"
+    return run_a_test_against_clf_layer_i(
+        sentence, test_string, layer, file_name,
+        prediction_interpreter={
+            0: "Subject",
+            1: "Other",
+            2:"End of Sentence"
+        }
+    )
+
+
+def demo_of_end_of_sentence_vs_other(sentence, layer):
+    test_string = "test_andrea"
+    file_name = "middle_vs_not"
+    return run_a_test_against_clf_layer_i(
+        sentence, test_string, layer, file_name,
+        prediction_interpreter={
+            0: "End of Sentence",
+            1: "Other",
+        }
+    )
+
+
+def demo_of_verbing_verbs(sentence, layer):
+    test_string = "test_andrea"
+    file_name = "andrea_verbing_verbs"
+    return run_a_test_against_clf_layer_i(
+        sentence, test_string, layer, file_name,
+        prediction_interpreter={
+            0: "Subject",
+            1: "Verb",
+            2: "Other",
+            3: "End of Sentence"
+        }
+    )
+
 
 
 IPython.embed()
