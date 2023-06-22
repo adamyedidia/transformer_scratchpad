@@ -266,11 +266,16 @@ class PosEmbed(nn.Module):
         return pos_embed
 
 
+class OblationInstruction:
+    def __init__(self, layer, head_number):
+        self.layer = layer
+        self.head_number = head_number
+
+
 # rand_int_test(PosEmbed, [2, 4])
 # load_gpt2_test(PosEmbed, reference_gpt2.pos_embed, tokens)
-
 class Attention(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, index, oblation_instruction=None):
         super().__init__()
         self.cfg = cfg
         self.W_Q = nn.Parameter(torch.empty((cfg.n_heads, cfg.d_model, cfg.d_head)))
@@ -288,6 +293,8 @@ class Attention(nn.Module):
         self.b_O = nn.Parameter(torch.zeros((cfg.d_model)))
 
         self.register_buffer("IGNORE", torch.tensor(-1e5, dtype=torch.float32, device="cpu" if M1_MAC else "cuda"))
+        self.index = index
+        self.oblation_instruction = oblation_instruction
 
     def forward(self, normalized_resid_pre):
         # normalized_resid_pre: [batch, position, d_model]
@@ -301,9 +308,19 @@ class Attention(nn.Module):
         attn_scores = einsum(
             "batch query_pos n_heads d_head, batch key_pos n_heads d_head -> batch n_heads query_pos key_pos", q, k)
         attn_scores = attn_scores / math.sqrt(self.cfg.d_head)
-        attn_scores = self.apply_causal_mask(attn_scores)
 
+        attn_scores = self.apply_causal_mask(attn_scores)
         pattern = attn_scores.softmax(dim=-1)  # [batch, n_head, query_pos, key_pos]
+
+        # if we are instructing oblation then oblate at that layer and head number
+        if self.oblation_instruction:
+            o_i = self.oblation_instruction
+            layer = o_i.layer
+            head_number = o_i.head_number
+            if self.index == layer:
+                for row in range(pattern[0][head_number].shape[0]):
+                    for column in range(pattern[0][head_number].shape[1]):
+                        pattern[0][head_number][row][column] = 0.0
 
         v = einsum("batch key_pos d_model, n_heads d_model d_head -> batch key_pos n_heads d_head",
                    normalized_resid_pre, self.W_V) + self.b_V
@@ -313,6 +330,7 @@ class Attention(nn.Module):
 
         attn_out = einsum("batch query_pos n_heads d_head, n_heads d_head d_model -> batch query_pos d_model", z,
                           self.W_O) + self.b_O
+
         return attn_out
 
     def apply_causal_mask(self, attn_scores):
@@ -351,14 +369,15 @@ class MLP(nn.Module):
 # load_gpt2_test(MLP, reference_gpt2.blocks[0].mlp, cache["blocks.0.ln2.hook_normalized"])
 
 class TransformerBlock(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, i):
         super().__init__()
         self.cfg = cfg
 
         self.ln1 = LayerNorm(cfg)
-        self.attn = Attention(cfg)
+        self.attn = Attention(cfg, i)
         self.ln2 = LayerNorm(cfg)
         self.mlp = MLP(cfg)
+        self.index = i
 
     def forward(self, resid_pre):
         # resid_pre [batch, position, d_model]
@@ -402,7 +421,7 @@ class DemoTransformer(nn.Module):
         self.cfg = cfg
         self.embed = Embed(cfg)
         self.pos_embed = PosEmbed(cfg)
-        self.blocks = nn.ModuleList([TransformerBlock(cfg) for _ in range(cfg.n_layers)])
+        self.blocks = nn.ModuleList([TransformerBlock(cfg, i) for i in range(cfg.n_layers)])
         self.ln_final = LayerNorm(cfg)
         self.unembed = Unembed(cfg)
 
