@@ -427,7 +427,7 @@ class DemoTransformer(nn.Module):
 
     def forward(self, tokens, display=False, save_with_prefix=None, load=False, load_with_mod_vector=None,
                 intervene_in_resid_at_layer=None, resid_intervention_filename=None, save_tokens_at_index=None,
-                split_tokens_by_lists=None, split_tokens_by_lists_filename=None):
+                split_tokens_by_lists=None, split_tokens_by_lists_filename=None, reflect_vector_info=None):
         # tokens [batch, position]
 
         if load:
@@ -464,10 +464,21 @@ class DemoTransformer(nn.Module):
         # print(residual.shape)
         for i, block in enumerate(self.blocks):
             residual = block(residual)
+            if reflect_vector_info and i == reflect_vector_info['layer']:
+                cls = reflect_vector_info['cls']
+                token_index = reflect_vector_info['token_index']
+                token_as_np_array = residual[0][token_index].detach().numpy()
+                new_resid_for_token = reflect_vector(token_as_np_array, cls)
+                print(sum(sum(sum(residual))))
+                for j in range(len(residual[0][token_index])):
+                    residual[0][token_index][j] = new_resid_for_token[0][j]
+                print(sum(sum(sum(residual))))
             if i == intervene_in_resid_at_layer and resid_intervention_filename:
                 residual_intervention = pickle.load(open(resid_intervention_filename, 'rb'))
                 print('intervening!')
+                print(sum(sum(sum(residual))))
                 residual = (residual + torch.from_numpy(residual_intervention)).float()
+                print(sum(sum(sum(residual))))
             if save_with_prefix:
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_{i}.p', 'wb'))
             if save_tokens_at_index:
@@ -788,6 +799,48 @@ def run_and_learn_end_vs_not(filename, num_trials, n):
         learn_you_an_svm(filename, i, "ends", "middles")
 
 
+def get_random_sentence_punct_last(n, sentence_list):
+    sentences = [random.choice(sentence_list) for _ in range(n)]
+    solve_up = [
+        get_all_period_or_question_marks_sentence_and_indexes(' '.join(sentences[:i]))
+        for i in range(1, n+1)
+    ]
+    final_sentences, final_test_tokens_in, final_middle_indicies = solve_up[-1]
+    end_indicies = [len(test_tokens_in[0])-1 for sentences, test_tokens_in, middle_indicies in solve_up]
+    middle_indicies = [len(test_tokens_in[0])-2 for sentences, test_tokens_in, middle_indicies in solve_up]
+    assert len(end_indicies) == n
+    assert len(middle_indicies) == n
+    return final_sentences, final_test_tokens_in, end_indicies, middle_indicies
+
+
+def compare_punct_vs_last_word(filename, num_trials, n, sentence_list):
+    for _ in tqdm.tqdm(range(num_trials)):
+        sentence, test_tokens_in, word_indexes, last_indexes = get_random_sentence_punct_last(
+            n, sentence_list
+        )
+        info = SaveTokensAtPeriodInfo(filename=filename, end_indexes=word_indexes, middle_indexes=last_indexes)
+        demo_gpt2(test_tokens_in, save_tokens_at_index=info)
+
+def run_and_learn_period_vs_last_word(filename, num_trials, n):
+    for i in range(12):
+        pickle.dump([], open(f'ends_{filename}_{i}.p', 'wb'))
+        pickle.dump([], open(f'middles_{filename}_{i}.p', 'wb'))
+
+    # split numbers
+    compare_internal_vs_external_periods(
+        filename, int(num_trials*0.5), n, sentence_list=EXAMPLE_MIX
+    )
+    compare_internal_vs_external_periods(
+        filename, int(num_trials*0.3), n, sentence_list=EXAMPLE_SENTENCES
+    )
+    compare_internal_vs_external_periods(
+        filename, int(num_trials*0.2), n, sentence_list=EXAMPLE_QUESTIONS
+    )
+
+    for i in tqdm.tqdm(range(12)):
+        learn_you_an_svm(filename, i, "ends", "middles")
+
+
 def learn_you_an_svm(filename, i, zero_side, one_side):
     print(len(EXAMPLE_SENTENCES))
     print(len(EXAMPLE_QUESTIONS))
@@ -1028,6 +1081,70 @@ def demo_of_verbing_verbs(sentence, layer):
         }
     )
 
+
+def get_undo_layer_i(file_name, i):
+    cls = pickle.load(open(f'cls_{file_name}_{i}.p', 'rb'))
+    w = cls.coef_[0]
+    w_norm = w / np.linalg.norm(w)
+    return w_norm
+
+
+def make_intervention_on_one_token(change_index, length, file_name, layer_number, multiplier):
+    w_norm = multiplier * get_undo_layer_i(file_name, layer_number)
+    array = np.zeros((1, length, 768))
+    array[0, change_index, :] = w_norm
+    pickle.dump(array, open(f'w_norm{file_name}_index_{change_index}_layer_{layer_number}.p', 'wb'))
+
+
+def reflect_vector(X, clf):
+    X = X.reshape(1, -1)  # reshape the data
+    # Calculate the distance of the point to the hyperplane
+    distance = np.abs(clf.decision_function(X)) / np.linalg.norm(clf.coef_)
+
+    # Calculate the direction to move the point
+    direction = np.sign(clf.decision_function(X))
+
+    # Reflect the point across the hyperplane
+    X_reflected = X - 2 * distance * direction * (clf.coef_ / np.linalg.norm(clf.coef_))
+
+    # Predict the classes of X and X_reflected
+    y_pred = clf.predict(X)
+    y_pred_reflected = clf.predict(X_reflected)
+
+    print(f'Predicted class for X: {y_pred[0]}')
+    print(f'Predicted class for X_reflected: {y_pred_reflected[0]}')
+
+    return X_reflected
+
+
+def run_gpt_demo_with_intervention(input_string, layer, filename):
+    test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
+    period_index = len(test_tokens_in)-1
+
+    print("======= DEFAULT =========")
+    default_logits = demo_gpt2(test_tokens_in,)
+    print_top_n_last_token_from_logits(default_logits, 5, None)
+
+    print(f"======= REFLECTING =========")
+    my_logits = demo_gpt2(
+        test_tokens_in,
+        reflect_vector_info={
+            'layer': layer,
+            'cls': pickle.load(open(f'cls_{filename}_{layer}.p', 'rb')),
+            'token_index': period_index,
+        },
+    )
+    print_top_n_last_token_from_logits(my_logits, 5, None)
+
+    for multiplier in [-1000, -100, -20, 20, 100, 1000]:
+        print(f"======= WITH INTERVENTION {multiplier}=========")
+        make_intervention_on_one_token(period_index, len(test_tokens_in), filename, layer, multiplier)
+        my_logits = demo_gpt2(
+            test_tokens_in,
+            intervene_in_resid_at_layer=layer,
+            resid_intervention_filename=f'w_norm{filename}_index_{period_index}_layer_{layer}.p',
+        )
+        print_top_n_last_token_from_logits(my_logits, 5, None)
 
 
 IPython.embed()
