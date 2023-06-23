@@ -275,7 +275,7 @@ class OblationInstruction:
 # rand_int_test(PosEmbed, [2, 4])
 # load_gpt2_test(PosEmbed, reference_gpt2.pos_embed, tokens)
 class Attention(nn.Module):
-    def __init__(self, cfg, index, oblation_instruction=None):
+    def __init__(self, cfg, index, ):
         super().__init__()
         self.cfg = cfg
         self.W_Q = nn.Parameter(torch.empty((cfg.n_heads, cfg.d_model, cfg.d_head)))
@@ -294,9 +294,8 @@ class Attention(nn.Module):
 
         self.register_buffer("IGNORE", torch.tensor(-1e5, dtype=torch.float32, device="cpu" if M1_MAC else "cuda"))
         self.index = index
-        self.oblation_instruction = oblation_instruction
 
-    def forward(self, normalized_resid_pre):
+    def forward(self, normalized_resid_pre, oblation_instruction=None):
         # normalized_resid_pre: [batch, position, d_model]
         if self.cfg.debug: print("Normalized_resid_pre:", normalized_resid_pre.shape)
 
@@ -313,8 +312,8 @@ class Attention(nn.Module):
         pattern = attn_scores.softmax(dim=-1)  # [batch, n_head, query_pos, key_pos]
 
         # if we are instructing oblation then oblate at that layer and head number
-        if self.oblation_instruction:
-            o_i = self.oblation_instruction
+        if oblation_instruction:
+            o_i = oblation_instruction
             layer = o_i.layer
             head_number = o_i.head_number
             if self.index == layer:
@@ -379,10 +378,10 @@ class TransformerBlock(nn.Module):
         self.mlp = MLP(cfg)
         self.index = i
 
-    def forward(self, resid_pre):
+    def forward(self, resid_pre, o_i=None):
         # resid_pre [batch, position, d_model]
         normalized_resid_pre = self.ln1(resid_pre)
-        attn_out = self.attn(normalized_resid_pre)
+        attn_out = self.attn(normalized_resid_pre,  oblation_instruction=o_i)
         resid_mid = resid_pre + attn_out
 
         normalized_resid_mid = self.ln2(resid_mid)
@@ -416,7 +415,7 @@ SaveTokensAtPeriodInfo = namedtuple('SaveTokensAtPeriodInfo',['filename', 'end_i
 # load_gpt2_test(Unembed, reference_gpt2.unembed, cache["ln_final.hook_normalized"])
 
 class DemoTransformer(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg,):
         super().__init__()
         self.cfg = cfg
         self.embed = Embed(cfg)
@@ -427,7 +426,8 @@ class DemoTransformer(nn.Module):
 
     def forward(self, tokens, display=False, save_with_prefix=None, load=False, load_with_mod_vector=None,
                 intervene_in_resid_at_layer=None, resid_intervention_filename=None, save_tokens_at_index=None,
-                split_tokens_by_lists=None, split_tokens_by_lists_filename=None, reflect_vector_info=None):
+                split_tokens_by_lists=None, split_tokens_by_lists_filename=None, reflect_vector_info=None,
+                o_i=None):
         # tokens [batch, position]
 
         if load:
@@ -463,7 +463,7 @@ class DemoTransformer(nn.Module):
 
         # print(residual.shape)
         for i, block in enumerate(self.blocks):
-            residual = block(residual)
+            residual = block(residual, o_i)
             if reflect_vector_info and i == reflect_vector_info['layer']:
                 cls = reflect_vector_info['cls']
                 token_index = reflect_vector_info['token_index']
@@ -576,12 +576,14 @@ def test_if_token_in_top_n_tokens(my_logits, goal_token, n):
     return False
 
 
-def run_gpt2_small_on_string(input_string, prefix):
+def run_gpt2_small_on_string(input_string, prefix, o_i=None, print_logits=False):
     test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
     # is enc.encode('?.!') [30, 13, 0]
     end_of_sentence_tokens = [30, 13, 0]
     end_of_sentence_indicies = [ind for ind, ele in enumerate(test_tokens_in[0]) if ele.item() in end_of_sentence_tokens]
-    demo_logits_def = demo_gpt2(test_tokens_in, save_with_prefix=prefix)
+    demo_logits_def = demo_gpt2(test_tokens_in, save_with_prefix=prefix, o_i=o_i)
+    if print_logits:
+        print_top_n_last_token_from_logits(demo_logits_def, 5, None)
     return end_of_sentence_indicies
 
 
@@ -1056,6 +1058,58 @@ def demo_of_subject_end_of_sentence_other(sentence, layer):
     )
 
 
+def oblate_and_run_a_test_against_clf_layer_i(string, file_name, i, cls_file_name,
+                                              prediction_interpreter=None,
+                                              o_i=None,
+                                              ):
+    clf = pickle.load(open(f'cls_{cls_file_name}_{i}.p', 'rb'))
+    run_gpt2_small_on_string(string, file_name,o_i, True)
+    x = pickle.load(open(f'resid_{file_name}_{i}.p', 'rb'))
+    token_vecs = [t.detach().numpy() for t in x[0]]
+    set_1 = np.vstack(token_vecs)
+    predictions = clf.predict(set_1)
+    if prediction_interpreter:
+        predictions = [prediction_interpreter[prediction] for prediction in predictions]
+    tokens_1 = [enc.decode([j]) for j in cuda(reference_gpt2.to_tokens(string))[0]]
+    return [(a, b) for a, b in zip(tokens_1, predictions)]
+
+
+
+def oblate_and_run(sentence):
+    test_string = "test_andrea"
+    file_name = "middle_vs_not"
+
+
+    for layer in range(12):
+        for head_number in range(12):
+            o_i = OblationInstruction(layer, head_number)
+            origional = run_a_test_against_clf_layer_i(
+                sentence, test_string, 11, file_name,
+                prediction_interpreter={
+                    0: "End of Sentence",
+                    1: "Other",
+                }
+            )
+
+            new = oblate_and_run_a_test_against_clf_layer_i(
+                sentence, test_string, 11, file_name,
+                prediction_interpreter={
+                    0: "End of Sentence",
+                    1: "Other",
+                },
+                o_i=o_i,
+            )
+
+            if origional != new:
+                print(f'===== DIFF at Layer={layer} and head_number={head_number}')
+                print(list(zip(origional,new)))
+                print(f'<<<<<<<<<<<<Differences >>>>>>>>>>>>>>>>>>>')
+                for orig_tok, new_tok in zip(origional,new):
+                    if orig_tok != new_tok:
+                        print(f'orig={orig_tok} new={new_tok}')
+
+                print(f'%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+
 def demo_of_end_of_sentence_vs_other(sentence, layer):
     test_string = "test_andrea"
     file_name = "middle_vs_not"
@@ -1128,7 +1182,7 @@ def run_gpt_demo_with_intervention(input_string, layer, filename):
     print(f"======= REFLECTING =========")
     my_logits = demo_gpt2(
         test_tokens_in,
-        reflect_vector_info={
+        f={
             'layer': layer,
             'cls': pickle.load(open(f'cls_{filename}_{layer}.p', 'rb')),
             'token_index': period_index,
