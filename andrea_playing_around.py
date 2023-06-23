@@ -1029,5 +1029,18 @@ def demo_of_verbing_verbs(sentence, layer):
     )
 
 
+SEN_COMP_TOKEN_LENGTH = 9
+SEN_COMP_CLF_FILE_NAME = "sentence_completeness_clf_layer_"
+
+
+def get_sentence_completness_clf(layer):
+    return pickle.load(open(f'{SEN_COMP_CLF_FILE_NAME}_{layer}.p', 'rb'))
+
+
+def
+
+
+
+
 
 IPython.embed()
