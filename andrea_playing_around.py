@@ -552,7 +552,7 @@ def print_top_n_last_token_from_logits(my_logits, n, compare_on_these_token_indi
         return None
 
 
-def test_if_token_in_top_n_tokens(my_logits, goal_token, n):
+def test_if_token_in_top_n_tokens(my_logits, goal_token, n, print_info=False):
     # Get the logits for the last predicted token
     last_logits = my_logits[-1, -1]
     # Apply softmax to convert the logits to probabilities
@@ -568,12 +568,18 @@ def test_if_token_in_top_n_tokens(my_logits, goal_token, n):
     prob_token_list = list(zip(topk_probabilities, topk_tokens))
     prob_token_list.sort()
     # Print the top n tokens and their probabilities
-    for probability, token in prob_token_list:
-        print(f"Token: {token}, Probability: {probability}")
+    if print_info:
+        for probability, token in prob_token_list:
+            print(f"Token: {token}, Probability: {probability}")
+
+    goal_token_index = reference_gpt2.tokenizer.encode(goal_token)
+    goal_token_prob = probabilities[goal_token_index]
+    if print_info:
+        print(f"Correct Token ({goal_token}) Probability: {goal_token_prob}")
 
     if goal_token in topk_tokens:
-        return True
-    return False
+        return (True, goal_token_prob)
+    return (False, goal_token_prob)
 
 
 def run_gpt2_small_on_string(input_string, prefix, o_i=None, print_logits=False):
@@ -1202,11 +1208,122 @@ def run_gpt_demo_with_intervention(input_string, layer, filename):
 
 
 SEN_COMP_TOKEN_LENGTH = 9
-SEN_COMP_CLF_FILE_NAME = "sentence_completeness_clf_layer_"
+SEN_COMP_CLF_FILE_NAME = "sentence_completeness_clf_layer"
+SEN_DATA_SET_FILE_NAME = "eight_token_sentences.p"
+SEN_ID_TO_COMPLETENESS_FILE_NAME = "eight_token_index_to_completeness.p"
+SEN_ID_TO_SEN_FILE_NAME = "eight_token_index_to_sentence.p"
 
 
-def get_sentence_completness_clf(layer):
+def get_complete_sentences():
+    sen_id_to_sen = pickle.load(open(SEN_ID_TO_SEN_FILE_NAME, 'rb'))
+    sen_id_to_comp = pickle.load(open(SEN_ID_TO_COMPLETENESS_FILE_NAME, 'rb'))
+    return [sen_id_to_sen[key] for key, value in sen_id_to_comp.items() if value == 1]
+
+def get_sentence_completeness_clf(layer):
+    if not layer in range(11):
+        raise Exception("We have no classifier for the requested layer number")
+
     return pickle.load(open(f'{SEN_COMP_CLF_FILE_NAME}_{layer}.p', 'rb'))
+
+
+def check_if_gpt2_gets_right_answer_ablation(input_string, correct_next_token, oblation_instruction, prefix, print_info=False):
+    test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
+    demo_logits_def = demo_gpt2(test_tokens_in, save_with_prefix=prefix, o_i=oblation_instruction)
+    # (bool, prob)
+    return test_if_token_in_top_n_tokens(demo_logits_def, correct_next_token, 5, print_info=print_info)
+
+
+# TODO: get the file name
+SEN_COMP_MEAN_RESID_FILE_NAME = "mean_vector_layer"
+
+
+def get_completeness_mean(layer):
+    # mean_vector_layer_0.p
+    return pickle.load(open(f'{SEN_COMP_MEAN_RESID_FILE_NAME}_{layer}.p', 'rb'))
+
+
+def oblate_and_run_a_completeness_test_against_clf_layer_i(string, prefix, oblation_instruction=None):
+    right_answer = check_if_gpt2_gets_right_answer_ablation(string, '.', oblation_instruction, prefix)
+
+    clf_answers_layer_by_layer = []
+    for layer in [10,]:
+        x = pickle.load(open(f'resid_{prefix}_{layer}.p', 'rb'))
+        clf = get_sentence_completeness_clf(layer)
+        # TODO: use clf for something
+        vec_resid = x.detach().numpy().flatten()
+        assert len(vec_resid) == 6912
+        vec_minus_mean = vec_resid - get_completeness_mean(layer)
+        clf_answers_layer_by_layer.append(
+            (layer, clf.predict(
+                np.array([vec_minus_mean,])
+            )
+             )
+        )
+
+    return right_answer, clf_answers_layer_by_layer
+
+
+def sen_completeness_oblate_and_run(sentence, diff):
+    test_string = "test_andrea"
+
+    origional_answer, origional_clf_answers = oblate_and_run_a_completeness_test_against_clf_layer_i(
+        sentence, test_string,)
+
+    push_up = []
+    push_down = []
+
+    print(origional_answer, origional_clf_answers)
+
+    for layer in range(12):
+        for head_number in range(12):
+            o_i = OblationInstruction(layer, head_number)
+            new_answer, new_clf_answers = oblate_and_run_a_completeness_test_against_clf_layer_i(
+                sentence, test_string,
+                oblation_instruction=o_i,
+            )
+
+            difference = new_answer[1] - origional_answer[1]
+
+            if  difference > diff:
+                #print(f"Layer Number={layer} | Head Number={head_number}")
+                #print(new_answer, new_clf_answers)
+                push_up.append(
+                    ((layer, head_number), difference)
+                )
+
+            if new_answer[1] - origional_answer[1] < -diff:
+                #print(f"Layer Number={layer} | Head Number={head_number}")
+                #print(new_answer, new_clf_answers)
+                push_down.append(
+                    ((layer, head_number),difference)
+                )
+
+    return push_up, push_down
+
+
+
+def run_on_many_sentences(sentences, diff):
+    all_ups = []
+    all_downs = []
+    for sentence in sentences:
+        push_up, push_down = sen_completeness_oblate_and_run(sentence, diff)
+        all_ups.append(push_up)
+        all_downs.append(push_down)
+
+    layer_impacts_up = {}
+    layer_impacts_down = {}
+
+    for array in all_ups:
+        for intervention_name, difference in array:
+            layer_impacts_up[intervention_name] = layer_impacts_up.get(intervention_name, 0) + difference
+
+    for array in all_downs:
+        for intervention_name, difference in array:
+            layer_impacts_down[intervention_name] = layer_impacts_down.get(intervention_name, 0) + difference
+
+    return all_ups, all_downs, layer_impacts_up, layer_impacts_down
+
+
 
 
 
