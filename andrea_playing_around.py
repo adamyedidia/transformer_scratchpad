@@ -25,6 +25,8 @@ import tqdm.auto as tqdm
 from sklearn import svm
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+import matplotlib.lines as mlines
+
 
 LIST_OF_ALL_TOKENS = []
 enc = tiktoken.get_encoding('r50k_base')
@@ -116,15 +118,6 @@ next_tokens = torch.cat(
     [tokens, torch.tensor(next_token, device='cpu' if M1_MAC else 'cuda', dtype=torch.int64)[None, None]], dim=-1)
 new_logits = reference_gpt2(next_tokens)
 
-for activation_name, activation in cache.cache_dict.items():
-    # Only print for first layer
-    if ".0." in activation_name or "blocks" not in activation_name:
-        print(activation_name, activation.shape)
-
-for name, param in reference_gpt2.named_parameters():
-    # Only print for first layer
-    if ".0." in name or "blocks" not in name:
-        print(name, param.shape)
 
 
 # As a reference - note there's a lot of stuff we don't care about in here, to do with library internals or other architectures
@@ -163,7 +156,7 @@ def get_basic_config(model_name: str, **kwargs) -> Config:
 
 cfg = get_basic_config(model_name)
 
-print(loading.get_pretrained_model_config(model_name))
+#print(loading.get_pretrained_model_config(model_name))
 
 
 def rand_float_test(cls, shape):
@@ -173,7 +166,6 @@ def rand_float_test(cls, shape):
     print("Input shape:", random_input.shape)
     output = layer(random_input)
     print("Output shape:", output.shape)
-    print()
     return output
 
 
@@ -184,7 +176,6 @@ def rand_int_test(cls, shape):
     print("Input shape:", random_input.shape)
     output = layer(random_input)
     print("Output shape:", output.shape)
-    print()
     return output
 
 
@@ -427,7 +418,7 @@ class DemoTransformer(nn.Module):
     def forward(self, tokens, display=False, save_with_prefix=None, load=False, load_with_mod_vector=None,
                 intervene_in_resid_at_layer=None, resid_intervention_filename=None, save_tokens_at_index=None,
                 split_tokens_by_lists=None, split_tokens_by_lists_filename=None, reflect_vector_info=None,
-                o_i=None):
+                o_i=None, index_lists_with_output_lists=None):
         # tokens [batch, position]
 
         if load:
@@ -454,11 +445,10 @@ class DemoTransformer(nn.Module):
                 pickle.dump(residual, open(f'resid_{save_with_prefix}_start.p', 'wb'))
                 pickle.dump(embed, open(f'resid_{save_with_prefix}_embed.p', 'wb'))
                 pickle.dump(pos_embed, open(f'resid_{save_with_prefix}_pos_embed.p', 'wb'))
-
-
-
-
-
+            if index_lists_with_output_lists:
+                for index_list, dict_list_by_layer in index_lists_with_output_lists:
+                    for index in index_list:
+                        dict_list_by_layer['start'].append(residual[0][index])
 
 
         # print(residual.shape)
@@ -468,11 +458,19 @@ class DemoTransformer(nn.Module):
                 cls = reflect_vector_info['cls']
                 token_index = reflect_vector_info['token_index']
                 token_as_np_array = residual[0][token_index].detach().numpy()
+                resid_at_start = residual.clone()
                 new_resid_for_token = reflect_vector(token_as_np_array, cls)
-                print(sum(sum(sum(residual))))
                 for j in range(len(residual[0][token_index])):
                     residual[0][token_index][j] = new_resid_for_token[0][j]
-                print(sum(sum(sum(residual))))
+
+                print(f'Size of residual at start: {torch.norm(resid_at_start)}')
+                print(f'Size of intervention: {torch.norm(residual- resid_at_start)}')
+                size_of_intervention = torch.norm(residual - resid_at_start)
+                print(f'Size of residual after intervention: {torch.norm(residual)}')
+                percent = 100* size_of_intervention/torch.norm(resid_at_start)
+                print(f'Percent {percent} %')
+                array_for_size_percent = reflect_vector_info['array_for_size_percent']
+                array_for_size_percent.append((i, percent))
             if i == intervene_in_resid_at_layer and resid_intervention_filename:
                 residual_intervention = pickle.load(open(resid_intervention_filename, 'rb'))
                 print('intervening!')
@@ -504,6 +502,11 @@ class DemoTransformer(nn.Module):
                     for index in index_list:
                         current_token_list.append(residual[0][index])
                     pickle.dump(current_token_list, open(f'{my_filename}_{key}_{i}.p', 'wb'))
+            if index_lists_with_output_lists:
+                for index_list, dict_list_by_layer in index_lists_with_output_lists:
+                    for index in index_list:
+                        dict_list_by_layer[i].append(residual[0][index])
+
         normalized_resid_final = self.ln_final(residual)
 
         # visualize_tensor(residual)
@@ -525,7 +528,7 @@ class DemoTransformer(nn.Module):
 
 demo_gpt2 = DemoTransformer(get_basic_config(model_name=model_name))
 demo_gpt2.load_state_dict(reference_gpt2.state_dict(), strict=False)
-print(cuda(demo_gpt2))
+#print(cuda(demo_gpt2))
 
 
 def print_top_n_last_token_from_logits(my_logits, n, compare_on_these_token_indices):
@@ -766,7 +769,7 @@ def get_random_period_or_question_sentences_and_indexes(n):
 
 
 def get_random_sentence_all_other_indicies(n, sentence_list):
-    sentences = [random.choice(sentence_list) for _ in range(n)]
+    sentences = [random.choice(sentence_list) for _ in range(random.randrange(1, n+1))]
     solve_up = [
         get_all_period_or_question_marks_sentence_and_indexes(' '.join(sentences[:i]))
         for i in range(1, n+1)
@@ -828,6 +831,7 @@ def compare_punct_vs_last_word(filename, num_trials, n, sentence_list):
         )
         info = SaveTokensAtPeriodInfo(filename=filename, end_indexes=word_indexes, middle_indexes=last_indexes)
         demo_gpt2(test_tokens_in, save_tokens_at_index=info)
+
 
 def run_and_learn_period_vs_last_word(filename, num_trials, n):
     for i in range(12):
@@ -913,10 +917,10 @@ def check_test_against_clf_layer_i(one_sentence, file_name, i, cls_file_name):
 
 
 # Run a test to see how the classifier works
-def run_a_test_against_clf_layer_i(string, file_name, i, cls_file_name, prediction_interpreter=None):
-    clf = pickle.load(open(f'cls_{cls_file_name}_{i}.p', 'rb'))
+def run_a_test_against_clf_layer_i(string, file_name, layer, cls_file_name, prediction_interpreter=None):
+    clf = pickle.load(open(f'cls_{cls_file_name}_{layer}.p', 'rb'))
     run_gpt2_small_on_string(string, file_name)
-    x = pickle.load(open(f'resid_{file_name}_{i}.p', 'rb'))
+    x = pickle.load(open(f'resid_{file_name}_{layer}.p', 'rb'))
     token_vecs = [t.detach().numpy() for t in x[0]]
     set_1 = np.vstack(token_vecs)
     predictions = clf.predict(set_1)
@@ -1152,7 +1156,9 @@ def get_undo_layer_i(file_name, i):
 def make_intervention_on_one_token(change_index, length, file_name, layer_number, multiplier):
     w_norm = multiplier * get_undo_layer_i(file_name, layer_number)
     array = np.zeros((1, length, 768))
+    print(f"Intervention Shape={array.shape}")
     array[0, change_index, :] = w_norm
+    # print(f"Intervention Array={array}")
     pickle.dump(array, open(f'w_norm{file_name}_index_{change_index}_layer_{layer_number}.p', 'wb'))
 
 
@@ -1177,34 +1183,25 @@ def reflect_vector(X, clf):
     return X_reflected
 
 
-def run_gpt_demo_with_intervention(input_string, layer, filename):
+def run_gpt_demo_with_intervention(input_string, layer, filename, percents=[]):
     test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
-    period_index = len(test_tokens_in)-1
+    period_index = len(test_tokens_in[0])-1
 
-    print("======= DEFAULT =========")
-    default_logits = demo_gpt2(test_tokens_in,)
-    print_top_n_last_token_from_logits(default_logits, 5, None)
+    print(f"++++ period_index={period_index} +++++  len(tokens)={len(test_tokens_in[0])}")
 
-    print(f"======= REFLECTING =========")
+    print(f"======= REFLECTING Layer {layer}=========")
     my_logits = demo_gpt2(
         test_tokens_in,
-        f={
+        reflect_vector_info={
             'layer': layer,
             'cls': pickle.load(open(f'cls_{filename}_{layer}.p', 'rb')),
             'token_index': period_index,
+            'array_for_size_percent': percents,
         },
     )
     print_top_n_last_token_from_logits(my_logits, 5, None)
 
-    for multiplier in [-1000, -100, -20, 20, 100, 1000]:
-        print(f"======= WITH INTERVENTION {multiplier}=========")
-        make_intervention_on_one_token(period_index, len(test_tokens_in), filename, layer, multiplier)
-        my_logits = demo_gpt2(
-            test_tokens_in,
-            intervene_in_resid_at_layer=layer,
-            resid_intervention_filename=f'w_norm{filename}_index_{period_index}_layer_{layer}.p',
-        )
-        print_top_n_last_token_from_logits(my_logits, 5, None)
+    return my_logits
 
 
 SEN_COMP_TOKEN_LENGTH = 9
@@ -1218,6 +1215,7 @@ def get_complete_sentences():
     sen_id_to_sen = pickle.load(open(SEN_ID_TO_SEN_FILE_NAME, 'rb'))
     sen_id_to_comp = pickle.load(open(SEN_ID_TO_COMPLETENESS_FILE_NAME, 'rb'))
     return [sen_id_to_sen[key] for key, value in sen_id_to_comp.items() if value == 1]
+
 
 def get_sentence_completeness_clf(layer):
     if not layer in range(11):
@@ -1301,7 +1299,6 @@ def sen_completeness_oblate_and_run(sentence, diff):
     return push_up, push_down
 
 
-
 def run_on_many_sentences(sentences, diff):
     all_ups = []
     all_downs = []
@@ -1324,9 +1321,194 @@ def run_on_many_sentences(sentences, diff):
     return all_ups, all_downs, layer_impacts_up, layer_impacts_down
 
 
+def get_random_sentence_other_periods(n, sentence_list):
+    sentences = [random.choice(sentence_list) for _ in range(n)]
+    solve_up = [
+        get_all_period_or_question_marks_sentence_and_indexes(' '.join(sentences[:i]))
+        for i in range(1, n+1)
+    ]
+    final_sentences, final_test_tokens_in, final_middle_indicies = solve_up[-1]
+    end_indicies = [len(test_tokens_in[0])-1 for sentences, test_tokens_in, middle_indicies in solve_up]
+    middle_indicies = [j for j in range(len(final_test_tokens_in[0]))
+                       if (j not in end_indicies) and (final_test_tokens_in[0][j].item() == 13)]
+    assert len(end_indicies) == n
+    return final_sentences, final_test_tokens_in, end_indicies, middle_indicies
 
 
+def compare_title_vs_end(num_trials, n, sentence_list):
+    title_dict = {j: [] for j in range(12)}
+    end_dict = {j: [] for j in range(12)}
+    title_dict['start'] = []
+    end_dict['start'] = []
 
+    for _ in tqdm.tqdm(range(num_trials)):
+        sentence, test_tokens_in, end_indexes, title_indexes = get_random_sentence_other_periods(
+            n, sentence_list
+        )
+        demo_gpt2(test_tokens_in, index_lists_with_output_lists=[(end_indexes, end_dict), (title_indexes, title_dict)])
+
+    return title_dict, end_dict
+
+
+def learn_you_an_svm_from_lists(filename, layer, zero_side, one_side):
+    # Convert lists of tensors into 2D arrays
+    set1 = np.vstack([t.detach().numpy() for t in zero_side])
+    set2 = np.vstack([t.detach().numpy() for t in one_side])
+
+    # Combine the sets into one array for training data
+    X = np.vstack((set1, set2))
+
+    # Create labels for the sets. We'll use 0 for set1 and 1 for set2.
+    y = np.array([0] * len(set1) + [1] * len(set2))
+    print(y)
+
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Create a SVM Classifier
+    clf = svm.SVC(kernel='linear')  # Linear Kernel
+
+    # Train the model using the training sets
+    clf.fit(X_train, y_train)
+
+    # Predict the response for test dataset
+    y_pred = clf.predict(X_test)
+    print(y_pred)
+    print(y_test)
+
+    # Model Accuracy: how often is the classifier correct?
+    print("Accuracy:", accuracy_score(y_test, y_pred))
+
+    pickle.dump(clf, open(f'cls_{filename}_{layer}.p', 'wb'))
+    return clf
+
+
+def run_and_learn_tile_vs_end(filename, num_trials, n):
+    # split numbers
+    title_dict, end_dict = compare_title_vs_end(
+        num_trials, n, sentence_list=EXAMPLE_SENTENCES
+    )
+
+    for layer in tqdm.tqdm(list(range(12))+['start',]):
+        learn_you_an_svm_from_lists(filename, layer, end_dict[layer], title_dict[layer])
+
+
+def demo_of_title_vs_end(sentence, layer):
+    test_string = "test_andrea"
+    file_name = "title_vs_end"
+    return run_a_test_against_clf_layer_i(
+        sentence, test_string, layer, file_name,
+        prediction_interpreter={
+            0: "End period",
+            1: "Title period",
+        }
+    )
+
+
+NEW_SENTENCE_TOKENS = [' The', ' They', '  Mr', ' Dr', ' Mrs', ' His', ' Ms', ' Miss', ' He', ' She']
+STUPID_NAMES = [' Adams']
+
+
+def run_gpt_demo_title_intervention_all_layers_and_graph(input_string):
+    filename = "title_vs_end"
+    new_sentence_index = [reference_gpt2.tokenizer.encode(i)[0] for i in NEW_SENTENCE_TOKENS]
+    name_index = [reference_gpt2.tokenizer.encode(i)[0] for i in STUPID_NAMES]
+
+    new_sentence_probs_all = []
+    name_probs_all = []
+    percents = []
+
+    print("======= DEFAULT =========")
+    test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
+    default_logits = demo_gpt2(test_tokens_in,)
+    print_top_n_last_token_from_logits(default_logits, 5, None)
+    # Get the logits for the last predicted token
+    last_logits = default_logits[-1, -1]
+    # Apply softmax to convert the logits to probabilities
+    probabilities = torch.nn.functional.softmax(last_logits, dim=0).detach().numpy()
+    new_sentence_probs = probabilities[new_sentence_index]
+    name_probs = probabilities[name_index]
+
+    default_new_sentence_prob = new_sentence_probs.mean()
+    default_name_prob = name_probs.mean()
+
+    for layer in range(12):
+        my_logits = run_gpt_demo_with_intervention(input_string, layer, filename, percents=percents)
+        # Get the logits for the last predicted token
+        last_logits = my_logits[-1, -1]
+        # Apply softmax to convert the logits to probabilities
+        probabilities = torch.nn.functional.softmax(last_logits, dim=0).detach().numpy()
+        new_sentence_probs = probabilities[new_sentence_index]
+        name_probs = probabilities[name_index]
+
+        new_sentence_probs_all.append(new_sentence_probs.mean())
+        name_probs_all.append(name_probs.mean())
+
+    print(f"Percents  = {percents}")
+    # Extract layers and percents
+    layers = [layer for layer, _ in percents]
+    percent_values = [percent.item() for _, percent in percents]  # use .item() to convert tensors to numbers
+
+    # Create the plot
+    plt.figure(figsize=(10, 5))
+    plt.plot(layers, percent_values, marker='o')
+    plt.xlabel('Layer')
+    plt.ylabel('Intervention Size')
+    plt.title('Intervention Size % of Residual Size by Layer')
+    plt.grid(True)
+    plt.show()
+
+    # Plot the average probabilities for each set of tokens at each layer
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(12), new_sentence_probs_all, label='New Sentence Tokens', color='blue')
+    plt.plot(range(12), name_probs_all, label=f'{STUPID_NAMES}', color='red')
+    plt.axhline(default_new_sentence_prob, color='blue', linestyle='dotted', label='Default New Sentence Prob.')
+    plt.axhline(default_name_prob, color='red', linestyle='dotted', label='Default Name Prob.')
+    plt.xlabel('Layer')
+    plt.ylabel('Average Probability')
+    plt.title(f'Average Probability by Layer for "{input_string}"')
+    plt.legend()
+    plt.show()
+
+
+    ## Prob of all things
+    # Extract layers and percents
+    layers = [layer for layer, _ in percents]
+    percent_values = [percent.item() for _, percent in percents]
+
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+    # Plot the intervention sizes
+    ax1.plot(layers, percent_values, 'o-', color='tab:purple', label='Intervention Size', linewidth=2.5,
+             linestyle='dashed')
+    ax1.set_xlabel('Layer')
+    ax1.set_ylabel('Intervention Size', color='tab:purple')
+    ax1.tick_params(axis='y', labelcolor='tab:purple')
+
+    ax2 = ax1.twinx()  # Create a second y-axis
+
+    # Plot the probabilities on the second y-axis
+    ax2.plot(layers, new_sentence_probs_all, 's-', label='New Sentence Tokens', color='tab:orange')
+    ax2.plot(layers, name_probs_all, 'd-', label=f'{STUPID_NAMES}', color='tab:green')
+    ax2.axhline(default_new_sentence_prob, color='tab:orange', linestyle='dotted', label='Default New Sentence Prob.')
+    ax2.axhline(default_name_prob, color='tab:green', linestyle='dotted', label='Default Name Prob.')
+    ax2.set_ylabel('Average Probability', color='tab:orange')
+    ax2.tick_params(axis='y', labelcolor='tab:orange')
+
+    # Add explanations to the legend
+    intervention_line = mlines.Line2D([], [], color='tab:purple', marker='o', linestyle='dashed',
+                                      label='Intervention Size')
+    left_label = mlines.Line2D([], [], color='white', label='Left: Intervention Size')
+    right_label = mlines.Line2D([], [], color='white', label='Right: Average Probability')
+    ax2.legend(handles=[intervention_line, ax2.get_legend_handles_labels()[0][0], ax2.get_legend_handles_labels()[0][1],
+                        ax2.get_legend_handles_labels()[0][2], ax2.get_legend_handles_labels()[0][3], left_label,
+                        right_label])
+
+    fig.subplots_adjust(top=0.9)  # Adjust the top space
+    fig.suptitle(f'Intervention Sizes and Probabilities by Layer for "{input_string}"',
+                 y=0.98)  # Adjust the position of title
+    plt.grid(True)
+    plt.show()
 
 
 

@@ -307,7 +307,6 @@ EXAMPLE_SENTENCES = ["Mr. Johnson bought a new car.",
                      "The crackling campfire provided warmth and companionship on a chilly night under the starry sky.",
                      "Dr. Wright revolutionized the field of renewable energy through groundbreaking research.",
                      "Noah and Lily embarked on an adrenaline-fueled adventure, bungee jumping from a towering bridge.",
-
                      "I didn't know what to do, so I called Mr. Johnson.",
                      "She was lost in the city and sought help from Officer Smith.",
                      "The patient needed immediate attention, so we called Dr. Parker.",
