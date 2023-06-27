@@ -1,6 +1,6 @@
 from example_sentences import EXAMPLE_SENTENCES, EXAMPLE_QUESTIONS, EXAMPLE_MIX, SEMICOLON_EXAMPLE_SENTENCES, \
     EXAMPLE_SUBJECT_BREAKDOWNS, EXAMPLE_SUBJECT_BREAKDOWNS_KEYS, EXAMPLE_SUBJECT_VERB_BREAKDOWNS_KEYS, \
-    EXAMPLE_SUBJECT_VERB_BREAKDOWNS
+    EXAMPLE_SUBJECT_VERB_BREAKDOWNS, EXAMPLE_TITLES
 
 IN_COLAB = False
 M1_MAC = True
@@ -33,6 +33,9 @@ enc = tiktoken.get_encoding('r50k_base')
 i = 0
 for i in range(50257):
     LIST_OF_ALL_TOKENS.append(enc.decode([i]))
+
+
+TITLE_TOKEN_INDEXES = [1583,  1770, 9074, 6997, 6187, 5246, 27034, 10128]
 
 
 def alphabetic_rank(word):
@@ -418,7 +421,8 @@ class DemoTransformer(nn.Module):
     def forward(self, tokens, display=False, save_with_prefix=None, load=False, load_with_mod_vector=None,
                 intervene_in_resid_at_layer=None, resid_intervention_filename=None, save_tokens_at_index=None,
                 split_tokens_by_lists=None, split_tokens_by_lists_filename=None, reflect_vector_info=None,
-                o_i=None, index_lists_with_output_lists=None):
+                o_i=None, index_lists_with_output_lists=None, store_index_diffs=None,
+                replace_layer_i_with_title_intervention=None):
         # tokens [batch, position]
 
         if load:
@@ -438,6 +442,7 @@ class DemoTransformer(nn.Module):
             # print(pos_embed.shape)
             # visualize_tensor(pos_embed, "Positional Embedding")
             residual = embed + pos_embed
+            start_residual = embed + pos_embed
             if intervene_in_resid_at_layer == 'start' and resid_intervention_filename:
                 residual_intervention = pickle.load(open(resid_intervention_filename, 'rb'))
                 residual = (residual + torch.from_numpy(residual_intervention)).float()
@@ -448,12 +453,25 @@ class DemoTransformer(nn.Module):
             if index_lists_with_output_lists:
                 for index_list, dict_list_by_layer in index_lists_with_output_lists:
                     for index in index_list:
-                        dict_list_by_layer['start'].append(residual[0][index])
+                        if store_index_diffs:
+                            dict_list_by_layer['start'].append(residual[0][index] - start_residual[0][index])
+                        else:
+                            dict_list_by_layer['start'].append(residual[0][index])
 
 
         # print(residual.shape)
         for i, block in enumerate(self.blocks):
             residual = block(residual, o_i)
+            if replace_layer_i_with_title_intervention and i == replace_layer_i_with_title_intervention:
+                my_intervention_dict = pickle.load(open('title_intervention_dict.p', 'rb'))
+                # find indexes which need to be overwritten. We are looking for a .
+                # proceded by a title_token_index
+                for title_token_index in TITLE_TOKEN_INDEXES:
+                    for j in range(len(tokens[0])-1):
+                        if (tokens[0][j].item() == title_token_index) and (tokens[0][j+1] == 13):
+                            period_token = j+1
+                            residual[0][period_token] = start_residual[0][period_token] + my_intervention_dict[title_token_index][i]
+
             if reflect_vector_info and i == reflect_vector_info['layer']:
                 cls = reflect_vector_info['cls']
                 token_index = reflect_vector_info['token_index']
@@ -503,9 +521,13 @@ class DemoTransformer(nn.Module):
                         current_token_list.append(residual[0][index])
                     pickle.dump(current_token_list, open(f'{my_filename}_{key}_{i}.p', 'wb'))
             if index_lists_with_output_lists:
+
                 for index_list, dict_list_by_layer in index_lists_with_output_lists:
                     for index in index_list:
-                        dict_list_by_layer[i].append(residual[0][index])
+                        if store_index_diffs:
+                            dict_list_by_layer[i].append(residual[0][index] - start_residual[0][index])
+                        else:
+                            dict_list_by_layer[i].append(residual[0][index])
 
         normalized_resid_final = self.ln_final(residual)
 
@@ -1348,6 +1370,140 @@ def compare_title_vs_end(num_trials, n, sentence_list):
         demo_gpt2(test_tokens_in, index_lists_with_output_lists=[(end_indexes, end_dict), (title_indexes, title_dict)])
 
     return title_dict, end_dict
+
+
+def get_random_sentence_with_titles(n):
+    sentence_list = EXAMPLE_TITLES
+    sentences = [random.choice(sentence_list) for _ in range(n)]
+    string_total = ' '.join(sentences)
+    tokens_for_titles = cuda(reference_gpt2.to_tokens(string_total))
+
+    index_lists = []
+
+    for word_token_index in TITLE_TOKEN_INDEXES:
+        word_list = []
+        for token_index, token_value in enumerate(tokens_for_titles[0]):
+            token_int = token_value.item()
+            if token_index < len(tokens_for_titles[0])-2 and token_int == word_token_index:
+                # a period
+                if tokens_for_titles[0][token_index + 1].item() == 13:
+                    word_list.append(token_index+1)
+
+        index_lists.append(word_list)
+
+    return string_total, tokens_for_titles, index_lists
+
+
+def figure_out_titles(num_trials, n):
+    title_dicts = [{j: [] for j in range(12)} for _ in TITLE_TOKEN_INDEXES]
+    for d in title_dicts:
+        d['start'] = []
+
+    for _ in tqdm.tqdm(range(num_trials)):
+        sentence, test_tokens_in, title_index_lists = get_random_sentence_with_titles(n)
+        zip_index_dicts = list(zip(title_index_lists, title_dicts))
+        demo_gpt2(test_tokens_in, index_lists_with_output_lists=zip_index_dicts, store_index_diffs=True)
+
+    return list(zip(TITLE_TOKEN_INDEXES, title_dicts))
+
+
+def define_a_title_intervention(num_trials, n):
+    pairs_token_dict_diffs_per_layer = figure_out_titles(num_trials, n)
+
+    # we want to use it like this
+    # dict[title_token][layer] = diff to add
+    my_intervetion_dict = {}
+
+    for title_token_index, dict_diff_by_layer in pairs_token_dict_diffs_per_layer:
+        my_intervetion_dict[title_token_index] = {}
+        for layer, list_of_diffs in dict_diff_by_layer.items():
+            tensor_stack = torch.stack(list_of_diffs)
+            # Compute the mean along this new dimension
+            tensor_mean = tensor_stack.mean(dim=0)
+            my_intervetion_dict[title_token_index][layer] = tensor_mean
+
+    pickle.dump(my_intervetion_dict, open('title_intervention_dict.p', 'wb'))
+    return my_intervetion_dict
+
+
+def total_variation_distance(vec_p, vec_q):
+    return 0.5 * np.sum(np.abs(vec_p - vec_q))
+
+
+def get_probabilities_from_logits(my_logits):
+    # Get the logits for the last predicted token
+    last_logits = my_logits[-1, -1]
+    # Apply softmax to convert the logits to probabilities
+    probabilities = torch.nn.functional.softmax(last_logits, dim=0).detach().numpy()
+    return probabilities
+
+
+def title_compare_run_gpt2(input_string, layer):
+    test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
+    default_logits_def = demo_gpt2(test_tokens_in,)
+    intervention_logits_def = demo_gpt2(test_tokens_in, replace_layer_i_with_title_intervention=layer)
+    default_probs = get_probabilities_from_logits(default_logits_def)
+    intervention_probs = get_probabilities_from_logits(intervention_logits_def)
+
+    print('========= DEFAULT =============')
+    print_top_n_last_token_from_logits(default_logits_def, 5, None)
+
+    print(f'========= INTERVENTION LAYER {layer} =============')
+    print_top_n_last_token_from_logits(intervention_logits_def, 5, None)
+
+    print('========== TVD ==============')
+    t_v_d = total_variation_distance(default_probs, intervention_probs)
+    print(f'TVD = {t_v_d}')
+
+    return t_v_d
+
+
+def titles_run_many_sentences_and_plot(list_of_sentences):
+    # Store results in a dictionary: {sentence: [tvd1, tvd2, ..., tvd12]}
+    results = {}
+    tvd_at_layer_4 = []
+
+    # Iterate over each sentence
+    for sentence in list_of_sentences:
+        print(f'[[[[[[[[[[[[[[[[[[[[[[[ {sentence} ]]]]]]]]]]]]]]]]]]]]]]]')
+        tvd_values = []
+        # For each layer
+        for layer in range(12):
+            # Calculate total variation distance
+            tvd = title_compare_run_gpt2(sentence, layer)
+            tvd_values.append(tvd)
+        results[sentence] = tvd_values
+        # Store the TVD at layer 4 for each sentence
+        tvd_at_layer_4.append((sentence, tvd_values[4]))
+
+    # Set up plot
+    plt.figure(figsize=(10, 5))
+
+    # Create a color cycle for lines
+    colors = plt.cm.viridis(np.linspace(0, 1, len(list_of_sentences)))
+
+    # Plot each sentence's results
+    for i, (sentence, tvd_values) in enumerate(results.items()):
+        plt.plot(range(12), tvd_values, label=sentence, color=colors[i])
+
+        # Set labels, title, and legend
+    plt.xlabel('Layer')
+    plt.ylabel('Total Variation Distance')
+    plt.title('Total Variation Distance by Layer for Each Sentence')
+
+    # Customizing x-axis ticks
+    plt.xticks(range(12))
+
+    # Adjusting legend position
+    plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2)
+
+    # Show plot with legend outside of plot area
+    plt.tight_layout()
+    plt.show()
+
+    # Print the TVD at layer 4 for each sentence
+    for sentence, tvd in tvd_at_layer_4:
+        print(f'TVD at layer 4 for sentence "{sentence}": {tvd}')
 
 
 def learn_you_an_svm_from_lists(filename, layer, zero_side, one_side):
