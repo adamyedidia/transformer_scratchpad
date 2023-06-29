@@ -1,3 +1,5 @@
+from typing import NamedTuple
+
 from example_sentences import EXAMPLE_SENTENCES, EXAMPLE_QUESTIONS, EXAMPLE_MIX, SEMICOLON_EXAMPLE_SENTENCES, \
     EXAMPLE_SUBJECT_BREAKDOWNS, EXAMPLE_SUBJECT_BREAKDOWNS_KEYS, EXAMPLE_SUBJECT_VERB_BREAKDOWNS_KEYS, \
     EXAMPLE_SUBJECT_VERB_BREAKDOWNS, EXAMPLE_TITLES
@@ -26,7 +28,7 @@ from sklearn import svm
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import matplotlib.lines as mlines
-
+import heapq
 
 LIST_OF_ALL_TOKENS = []
 enc = tiktoken.get_encoding('r50k_base')
@@ -422,7 +424,7 @@ class DemoTransformer(nn.Module):
                 intervene_in_resid_at_layer=None, resid_intervention_filename=None, save_tokens_at_index=None,
                 split_tokens_by_lists=None, split_tokens_by_lists_filename=None, reflect_vector_info=None,
                 o_i=None, index_lists_with_output_lists=None, store_index_diffs=None,
-                replace_layer_i_with_title_intervention=None):
+                replace_layer_i_with_title_intervention=None, pca_intervention_layer_and_index_list=None):
         # tokens [batch, position]
 
         if load:
@@ -462,6 +464,32 @@ class DemoTransformer(nn.Module):
         # print(residual.shape)
         for i, block in enumerate(self.blocks):
             residual = block(residual, o_i)
+            if pca_intervention_layer_and_index_list:
+                layer = pca_intervention_layer_and_index_list['layer']
+                if i == layer:
+                    index_list = pca_intervention_layer_and_index_list['index_list']
+                    if len(index_list) > 0:
+                        size_of_residual = torch.norm(residual).item()
+                        multiplier = pca_intervention_layer_and_index_list['multiplier']
+                        # if we want an intervention that is multiplier of the size of residual
+                        print(size_of_residual)
+                        per_index_multiplier = multiplier * size_of_residual / len(index_list)
+                        component_number = pca_intervention_layer_and_index_list['component_number']
+                        is_absolute = pca_intervention_layer_and_index_list['is_absolute']
+                        pca_vector = torch.from_numpy(
+                            (per_index_multiplier * get_pca_vector(
+                                layer, component_number, is_absolute=is_absolute
+                            ))
+                        )
+                        for index in index_list:
+                            residual[0][index] = (residual[0][index] + pca_vector).float()
+
+                        print(f'Size of residual at start: {size_of_residual}')
+                        size_of_intervention = torch.norm(pca_vector) * len(index_list)
+                        print(f'Size of intervention: {size_of_intervention}')
+                        print(f'Size of residual after intervention: {torch.norm(residual)}')
+                        percent = 100 * size_of_intervention / size_of_residual
+                        print(f'Percent {percent} %')
             if replace_layer_i_with_title_intervention and i == replace_layer_i_with_title_intervention:
                 my_intervention_dict = pickle.load(open('title_intervention_dict.p', 'rb'))
                 # find indexes which need to be overwritten. We are looking for a .
@@ -570,7 +598,7 @@ def print_top_n_last_token_from_logits(my_logits, n, compare_on_these_token_indi
     prob_token_list.sort()
     # Print the top n tokens and their probabilities
     for probability, token in prob_token_list:
-        print(f"Token: {token}, Probability: {probability}")
+        print(f"Token: \"{token}\", Probability: {probability}")
     if compare_on_these_token_indices:
         return [probabilities[index] for index in compare_on_these_token_indices]
     else:
@@ -595,7 +623,7 @@ def test_if_token_in_top_n_tokens(my_logits, goal_token, n, print_info=False):
     # Print the top n tokens and their probabilities
     if print_info:
         for probability, token in prob_token_list:
-            print(f"Token: {token}, Probability: {probability}")
+            print(f"Token: \"{token}\", Probability: {probability}")
 
     goal_token_index = reference_gpt2.tokenizer.encode(goal_token)
     goal_token_prob = probabilities[goal_token_index]
@@ -1184,6 +1212,16 @@ def make_intervention_on_one_token(change_index, length, file_name, layer_number
     pickle.dump(array, open(f'w_norm{file_name}_index_{change_index}_layer_{layer_number}.p', 'wb'))
 
 
+def get_pca_vector(layer, component_number, is_absolute=False):
+    if is_absolute:
+        print("Aboslute")
+        pca_vector = pickle.load(open(f'pca_files/10_token_absolute_pca_layer_{layer}_component_{component_number}.p', 'rb'))
+        return pca_vector/ np.linalg.norm(pca_vector)
+
+    pca_vector = pickle.load(open(f'pca_files/10_token_pca_layer_{layer}_component_{component_number}.p', 'rb'))
+    return pca_vector / np.linalg.norm(pca_vector)
+
+
 def reflect_vector(X, clf):
     X = X.reshape(1, -1)  # reshape the data
     # Calculate the distance of the point to the hyperplane
@@ -1458,6 +1496,44 @@ def title_compare_run_gpt2(input_string, layer):
     return t_v_d
 
 
+def get_indexes(lst, subset):
+    return [i for i, x in enumerate(lst) if x.item() in subset]
+
+
+def run_pca_intervention_on_listed_tokens(layer, component_number, multiplier, input_string, list_of_tokens, is_absolute=False):
+    test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
+    list_of_token_indexes = [reference_gpt2.tokenizer.encode(t)[0] for t in list_of_tokens]
+    print(list_of_token_indexes)
+    index_list = get_indexes(test_tokens_in[0], list_of_token_indexes)
+    print(index_list)
+    pca_run_intervention(layer, component_number, multiplier, index_list, test_tokens_in, is_absolute=is_absolute)
+
+
+def run_pca_intervention_on_last_token(layer, component_number, multiplier, input_string, is_absolute=False):
+    test_tokens_in = cuda(reference_gpt2.to_tokens(input_string))
+    index_list = [len(test_tokens_in[0])-1,]
+    pca_run_intervention(layer, component_number, multiplier, index_list, test_tokens_in, is_absolute=is_absolute)
+
+
+def pca_run_intervention(layer, component_number, multiplier, index_list, tokens, is_absolute=False):
+    intervention_dict = {
+        'layer': layer,
+        'index_list': index_list,
+        'multiplier': multiplier,
+        'component_number': component_number,
+        'is_absolute': is_absolute,
+
+    }
+    default_logits = demo_gpt2(tokens,)
+    intervention_logits = demo_gpt2(tokens, pca_intervention_layer_and_index_list=intervention_dict)
+
+    print('========= DEFAULT =============')
+    print_top_n_last_token_from_logits(default_logits, 5, None)
+
+    print(f'========= PCA INTERVENTION Layer={layer} Component={component_number} Multiplier={multiplier} Token Indexes={index_list}=============')
+    print_top_n_last_token_from_logits(intervention_logits, 5, None)
+
+
 def titles_run_many_sentences_and_plot(list_of_sentences):
     # Store results in a dictionary: {sentence: [tvd1, tvd2, ..., tvd12]}
     results = {}
@@ -1665,6 +1741,60 @@ def run_gpt_demo_title_intervention_all_layers_and_graph(input_string):
                  y=0.98)  # Adjust the position of title
     plt.grid(True)
     plt.show()
+
+
+class PCAVector(NamedTuple):
+    layer: int
+    component_number: int
+    vector: tuple  # now expecting a tuple
+
+    @classmethod
+    def from_numpy(cls, layer, component_number, vector):
+        return cls(layer, component_number, tuple(vector))
+
+    def __str__(self):
+        return f"PCAVector(layer={self.layer}, component_number={self.component_number}, vector_length={len(self.vector)})"
+
+    __repr__ = __str__
+
+
+def find_best_pca_vectors_per_layer(list1, list2, num_top_vectors, layer):
+    score_dict = {}
+    for component_number in range(768):
+        pca_vector_np = get_pca_vector(layer, component_number)
+        pca_vector = PCAVector.from_numpy(layer, component_number, pca_vector_np)
+
+        list1_np = [vector / np.linalg.norm(vector) for vector in list1]  # No need to call .numpy()
+        list2_np = [vector / np.linalg.norm(vector) for vector in list2]  # No need to call .numpy()
+
+        score1 = np.mean([np.dot(vector, pca_vector.vector) for vector in list1_np])
+        score2 = np.mean([np.dot(vector, pca_vector.vector) for vector in list2_np])
+
+        score_diff = abs(score1 - score2)
+        score_dict[pca_vector] = score_diff
+
+    sorted_dict = dict(sorted(score_dict.items(), key=lambda item: item[1], reverse=True))
+    top_pca_vectors = list(sorted_dict.items())[:num_top_vectors]  # list of (PCAVector, score_diff) tuples
+    return top_pca_vectors
+
+
+def find_top_pca_vectors(num_trials, n, sentence_list):
+    title_dict, end_dict = compare_title_vs_end(num_trials, 4, sentence_list)
+
+    # Convert tensors to normalized numpy arrays
+    for key in title_dict.keys():
+        title_dict[key] = [t.detach().numpy() / np.linalg.norm(t.detach().numpy()) for t in title_dict[key]]
+    for key in end_dict.keys():
+        end_dict[key] = [t.detach().numpy() / np.linalg.norm(t.detach().numpy()) for t in end_dict[key]]
+
+    top_pca_vectors = {}
+    for layer in range(12):
+        print(f'Layer = {layer}')
+        best = find_best_pca_vectors_per_layer(title_dict[layer], end_dict[layer], n, layer)
+        top_pca_vectors[layer] = best
+        print(best)
+
+    return top_pca_vectors
 
 
 
