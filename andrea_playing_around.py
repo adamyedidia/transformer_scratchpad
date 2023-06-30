@@ -1212,7 +1212,22 @@ def make_intervention_on_one_token(change_index, length, file_name, layer_number
     pickle.dump(array, open(f'w_norm{file_name}_index_{change_index}_layer_{layer_number}.p', 'wb'))
 
 
+# a hacky way to let you set this in Ipython
+TEST = False
+
+def random_unit_vector(d):
+    # Generate a random vector
+    vector = np.random.randn(d)
+    # Normalize the vector
+    vector /= np.linalg.norm(vector)
+    return vector
+
 def get_pca_vector(layer, component_number, is_absolute=False):
+    if TEST:
+        pca_vector = random_unit_vector(768)
+        print(f'Using RANDOM_UNIT_VECTOR')
+        return pca_vector/np.linalg.norm(pca_vector)
+
     if is_absolute:
         print("Aboslute")
         pca_vector = pickle.load(open(f'pca_files/10_token_absolute_pca_layer_{layer}_component_{component_number}.p', 'rb'))
@@ -1515,6 +1530,22 @@ def run_pca_intervention_on_last_token(layer, component_number, multiplier, inpu
     pca_run_intervention(layer, component_number, multiplier, index_list, test_tokens_in, is_absolute=is_absolute)
 
 
+def prob_of_leading_space(my_logits, top_n):
+    last_logits = my_logits[-1, -1]
+    # Apply softmax to convert the logits to probabilities
+    probabilities = torch.nn.functional.softmax(last_logits, dim=0).detach().numpy()
+
+    # Get the indices of the top n probabilities
+    topk_indices = np.argpartition(probabilities, -top_n)[-top_n:]
+    # Get the top n probabilities
+    topk_probabilities = probabilities[topk_indices]
+    # Get the top n tokens
+    topk_tokens = [reference_gpt2.tokenizer.decode(i) for i in topk_indices]
+
+    top_probs_with_spaces = [prob for prob, token in zip(topk_probabilities, topk_tokens) if token[0] == ' ']
+
+    return sum(top_probs_with_spaces)
+
 def pca_run_intervention(layer, component_number, multiplier, index_list, tokens, is_absolute=False):
     intervention_dict = {
         'layer': layer,
@@ -1529,9 +1560,12 @@ def pca_run_intervention(layer, component_number, multiplier, index_list, tokens
 
     print('========= DEFAULT =============')
     print_top_n_last_token_from_logits(default_logits, 5, None)
+    print(f'Leading Space = {prob_of_leading_space(default_logits, 100)}')
 
     print(f'========= PCA INTERVENTION Layer={layer} Component={component_number} Multiplier={multiplier} Token Indexes={index_list}=============')
     print_top_n_last_token_from_logits(intervention_logits, 5, None)
+    print(f'Leading Space = {prob_of_leading_space(intervention_logits, 100)}')
+
 
 
 def titles_run_many_sentences_and_plot(list_of_sentences):
@@ -1711,10 +1745,10 @@ def run_gpt_demo_title_intervention_all_layers_and_graph(input_string):
     fig, ax1 = plt.subplots(figsize=(10, 5))
 
     # Plot the intervention sizes
-    ax1.plot(layers, percent_values, 'o-', color='tab:purple', label='Intervention Size', linewidth=2.5,
+    ax1.plot(layers, percent_values, 'o-', color='tab:purple', label='Intervention Size %', linewidth=2.5,
              linestyle='dashed')
     ax1.set_xlabel('Layer')
-    ax1.set_ylabel('Intervention Size', color='tab:purple')
+    ax1.set_ylabel('Intervention Size % of Residual Size ', color='tab:purple')
     ax1.tick_params(axis='y', labelcolor='tab:purple')
 
     ax2 = ax1.twinx()  # Create a second y-axis
@@ -1729,7 +1763,7 @@ def run_gpt_demo_title_intervention_all_layers_and_graph(input_string):
 
     # Add explanations to the legend
     intervention_line = mlines.Line2D([], [], color='tab:purple', marker='o', linestyle='dashed',
-                                      label='Intervention Size')
+                                      label='Intervention Size %')
     left_label = mlines.Line2D([], [], color='white', label='Left: Intervention Size')
     right_label = mlines.Line2D([], [], color='white', label='Right: Average Probability')
     ax2.legend(handles=[intervention_line, ax2.get_legend_handles_labels()[0][0], ax2.get_legend_handles_labels()[0][1],
@@ -1737,7 +1771,7 @@ def run_gpt_demo_title_intervention_all_layers_and_graph(input_string):
                         right_label])
 
     fig.subplots_adjust(top=0.9)  # Adjust the top space
-    fig.suptitle(f'Intervention Sizes and Probabilities by Layer for "{input_string}"',
+    fig.suptitle(f'Intervention Percent of Residual Stream and Probabilities by Layer for "{input_string}"',
                  y=0.98)  # Adjust the position of title
     plt.grid(True)
     plt.show()

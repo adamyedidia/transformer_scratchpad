@@ -730,6 +730,7 @@ def titles_run_many_sentences_and_plot(list_of_sentences):
     for sentence, tvd in tvd_at_layer_4:
         print(f'TVD at layer 4 for sentence "{sentence}": {tvd}')
 
+
 def demo_of_title_vs_end(sentence, layer):
     test_string = "test_andrea"
     file_name = "title_vs_end"
